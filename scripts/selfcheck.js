@@ -287,10 +287,20 @@ async function main() {
     check('错误管理令牌被拒绝', r.status === 401, `状态 ${r.status}`);
   }
 
-  // 14. 远程不允许自动下发令牌
+  // 14. 本机可自动下发令牌；远程不下发
   {
     const r = await request(base, { path: '/admin/api/bootstrap' });
-    check('本机回环地址可自动获取令牌（Dashboard 免配置）', r.status === 200 && !!r.json.token, `状态 ${r.status}`);
+    check('网关所在机器自己访问可自动获取令牌（Dashboard 免配置）', r.status === 200 && !!r.json.token, `状态 ${r.status}`);
+
+    // 拿到的令牌必须真能当管理令牌用 —— 这正是前端 `?token=<令牌>`
+    // 跨局域网访问时唯一的零配置通路，断了用户就只能手工粘贴。
+    const tk = (r.json && r.json.token) || '';
+    if (tk) {
+      const viaToken = await request(base, { path: `/admin/api/overview?token=${encodeURIComponent(tk)}` });
+      check('下发的令牌可直接用于管理接口（?token= 通路可用）', viaToken.status === 200, `状态 ${viaToken.status}`);
+    } else {
+      check('下发的令牌可直接用于管理接口（?token= 通路可用）', false, '未取到令牌');
+    }
   }
 
   // 15. Dashboard 静态页

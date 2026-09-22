@@ -63,9 +63,9 @@ node src/index.js
 # 2) 打开监控大屏
 #    http://127.0.0.1:8787/
 
-# 3) 自检：51 项端到端断言，覆盖同意书门禁/鉴权/流式/故障转移/熔断/计量/推送/大屏
+# 3) 自检：52 项端到端断言，覆盖同意书门禁/鉴权/流式/故障转移/熔断/计量/推送/大屏
 node scripts/selfcheck.js
-#    （可选）再跑一遍大屏渲染冒烟：node scripts/ui-smoke.js   —— 58 项
+#    （可选）再跑一遍大屏渲染冒烟：node scripts/ui-smoke.js   —— 61 项
 #    （可选）更新子系统：node scripts/test-updater.js        —— 50 项
 ```
 
@@ -167,7 +167,7 @@ print("实际由", resp.x_gateway["provider_name"], "提供")   # 一眼看清�
 
 ### 6.1 安装
 
-产物就在项目根目录：**`free-model-gateway1.2.3.fpk`**（约 130 KB）
+产物就在项目根目录：**`free-model-gateway1.2.4.fpk`**（约 130 KB）
 
 1. 飞牛 fnOS → 应用中心 → 我的应用 → 右上角「安装应用」（或「手动安装」）
 2. 选择这个 `.fpk` 文件，一路下一步
@@ -215,15 +215,15 @@ python tools/verify_fpk.py       # 解包后按 NAS 的方式真跑一次，确�
 
 ```bash
 # 1) 改版本号（两处保持一致）
-#    fnos/manifest   version = 1.2.3
-#    package.json    "version": "1.2.3"
+#    fnos/manifest   version = 1.2.4
+#    package.json    "version": "1.2.4"
 
 # 2) 打标签并推送 —— 触发 .github/workflows/release.yml
-git tag v1.2.3
-git push origin v1.2.3
+git tag v1.2.4
+git push origin v1.2.4
 ```
 
-CI 会自动：跑端到端自检 + 大屏冒烟 → 打包 `.fpk` → 生成 `free-model-gateway-1.2.3.tgz` 与 `.sha256` → 发布 Release。
+CI 会自动：跑端到端自检 + 大屏冒烟 → 打包 `.fpk` → 生成 `free-model-gateway-1.2.4.tgz` 与 `.sha256` → 发布 Release。
 之后在网关面板点「检查更新」即可看到新版本并一键升级。
 
 > 本地预生成（不推 GitHub 时）：
@@ -318,8 +318,8 @@ token 只保存在本机数据目录的 `notify-config.json`，接口回显一�
 
 ```bash
 node src/index.js              # 启动
-node scripts/selfcheck.js      # 51 项端到端自检（同意书门禁 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 推送 / 大屏）
-node scripts/ui-smoke.js       # 58 项 Dashboard 渲染冒烟（真实 DOM 里跑 app.js，含主题切换与陈旧令牌自愈）
+node scripts/selfcheck.js      # 52 项端到端自检（同意书门禁 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 推送 / 大屏）
+node scripts/ui-smoke.js       # 61 项 Dashboard 渲染冒烟（真实 DOM 里跑 app.js，含主题切换、陈旧令牌自愈、?token= 直连）
 node scripts/test-updater.js   # 33 项自动更新 / 安全逻辑单测（tar 解包、路径穿越、gzip 拦截、GitHub 通道）
 node scripts/discover.js       # 手动重新发现免费模型（会写 config/models.discovered.json）
 node scripts/seed-demo.js      # 灌 29 天演示数据
@@ -427,9 +427,17 @@ node scripts/reset-data.js     # 清空统计（--all 连密钥一起重建）
 
 **Q：重装 / 换过数据目录之后，大屏弹同意书却只显示「管理令牌无效」？**
 浏览器 localStorage 里存着**上一次安装的旧管理令牌**——网关密钥是重新生成的，旧的自然失效，于是所有管理接口都 401。
-v1.2.3 起已自动处理：本机打开时前端会主动向服务端换一把新令牌并覆盖本地缓存，**刷新页面即可**，不用手工清缓存。
-若仍有问题（例如从局域网 IP 远程访问，服务端出于安全不下发令牌），点右上角齿轮手工粘贴 gateway key —— 它会打印在启动日志里，也存在 NAS 数据目录的 `gateway-key.txt`。
+v1.2.3 起已自动处理：在网关所在机器上打开时，前端会主动向服务端换一把新令牌并覆盖本地缓存，**刷新页面即可**，不用手工清缓存。
 另外：同意书正文本身**不校验令牌**，所以无论令牌是否有效，条款都一定能读出来、不会被卡在一个看不懂的报错上。
+
+**Q：从电脑浏览器访问 NAS 上的大屏，一直提示需要管理令牌，怎么办？**
+这是**有意为之**的安全设计：只有「网关所在机器自己」发起的请求才会自动下发管理令牌，同一个局域网里的其它主机不会拿到，否则同网段任何人都能看你的用量、改你的密钥。
+局域网访问有两条正规路子（任选其一，推荐第一条）：
+1. 用带令牌的地址打开，一次搞定并会记住：
+   `http://<NAS 的 IP>:8790/?token=<管理令牌>`
+   令牌在 NAS 数据目录的 `gateway-key.txt` 里，也打印在网关启动日志中。前端读到后会**立刻把 `?token=` 从地址栏抹掉**，不会留在浏览历史或截图里。
+2. 打开页面后点右上角**齿轮**图标，把令牌粘贴进「管理令牌」，回车即可。
+顺带一提：飞牛的**桌面图标**就是从这台 NAS 自己发起的访问，所以点图标进去是免令牌的——只是想在大屏上长时间挂着看，用电脑浏览器更方便。
 
 **Q：推送设置保存了，但微信收不到消息？**
 按顺序排查：

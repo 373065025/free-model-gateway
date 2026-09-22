@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: 端到端自检（51 项：同意书门禁 / 路由 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 推送）
+      - name: 端到端自检（52 项：同意书门禁 / 路由 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 推送）
         run: node scripts/selfcheck.js
 
       - name: 更新子系统测试（50 项：GitHub API 通道 + 免令牌网页通道）
@@ -41,5 +41,5 @@ jobs:
           done
           echo "网关启动超时"; cat /tmp/gateway.log; exit 1
 
-      - name: 大屏渲染冒烟（58 项，含同意书弹窗 → 同意 → 放行全流程 + 陈旧令牌自愈）
+      - name: 大屏渲染冒烟（61 项，含同意书弹窗 → 同意 → 放行全流程 + 陈旧令牌自愈 + ?token= 直连）
         run: node scripts/ui-smoke.js

@@ -18,8 +18,37 @@ function lsSet(key, value) {
   try { localStorage.setItem(key, value); } catch (_e) { /* 忽略 */ }
 }
 
+/**
+ * 支持用 `?token=<管理令牌>`（或 `#token=…`）打开大屏。
+ * 局域网 / 远程访问时服务端**故意不下发**令牌（安全设计），用户只能手填或走 URL，
+ * 而后端报错里一直引导的就是这种写法——前端此前没实现，导致远程访问无从下手。
+ * 读到后立刻把令牌从地址栏抹掉，免得留在浏览历史、书签和随手截图里。
+ */
+function takeTokenFromUrl() {
+  let token = '';
+  let clean = '';
+  try {
+    const qs = new URLSearchParams(location.search || '');
+    token = String(qs.get('token') || qs.get('admin_token') || '').trim();
+    if (!token && location.hash) {
+      const hs = new URLSearchParams(String(location.hash).replace(/^#/, ''));
+      token = String(hs.get('token') || '').trim();
+    }
+    if (!token) return '';
+    qs.delete('token');
+    qs.delete('admin_token');
+    const rest = qs.toString();
+    clean = location.pathname + (rest ? `?${rest}` : '') + (String(location.hash).includes('token') ? '' : (location.hash || ''));
+    if (window.history && history.replaceState) history.replaceState(null, '', clean);
+  } catch (_e) { /* 地址栏不受控（如内嵌 webview）时忽略 */ }
+  return token;
+}
+
+const URL_TOKEN = takeTokenFromUrl();
+if (URL_TOKEN) lsSet(TOKEN_KEY, URL_TOKEN);
+
 const state = {
-  token: lsGet(TOKEN_KEY, ''),
+  token: URL_TOKEN || lsGet(TOKEN_KEY, ''),
   theme: lsGet(THEME_KEY, 'system'),
   data: null,
   metric: 'total',
@@ -212,7 +241,7 @@ async function load() {
     render();
   } catch (err) {
     if (err.status === 401) {
-      showAlert('需要管理令牌才能查看数据。点右上角齿轮图标填入令牌；本机打开通常会自动填充，令牌也可在 NAS 数据目录的 gateway-key.txt 里找到。');
+      showAlert('需要管理令牌才能查看数据。最省事是用 http://<网关地址>:8790/?token=<管理令牌> 打开本页；也可以点右上角齿轮图标手工填入。令牌在 NAS 数据目录的 gateway-key.txt 里，也打印在启动日志中。从本机 127.0.0.1 访问会自动填充。');
       const panel = $('settingsPanel');
       if (panel) panel.classList.remove('hidden');
     } else if (err.code === 'eula_required') {
@@ -945,7 +974,12 @@ async function acceptEula() {
     await loadUpdateConfig();
     await loadNotify();
   } catch (err) {
-    $('eulaTip').textContent = `保存失败：${err.message}`;
+    // 局域网 / 远程访问时最常见的原因就是「没有管理令牌」。
+    // 服务端只在回环地址下发令牌，所以这里把可照做的办法直接写清楚，
+    // 别让用户对着一句「管理令牌无效」发呆。
+    $('eulaTip').textContent = err.status === 401
+      ? '保存失败：这个地址没有管理令牌。请改用 http://<网关地址>:8790/?token=<管理令牌> 打开本页（令牌在 NAS 数据目录的 gateway-key.txt 里，也打印在启动日志中），或点右上角齿轮手工粘贴。'
+      : `保存失败：${err.message}`;
     btn.disabled = false;
   } finally {
     btn.textContent = old;

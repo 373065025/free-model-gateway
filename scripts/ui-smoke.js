@@ -87,6 +87,17 @@ async function ensureSampleData(doc) {
   return true;
 }
 
+/* 取本机网关的管理令牌。只有「网关所在机器自己」访问才会下发，
+   跨局域网会 403 —— 返回空串时调用方应跳过相关断言。 */
+async function getAdminToken() {
+  try {
+    const res = await fetch(`${BASE}/admin/api/bootstrap`);
+    if (!res.ok) return '';
+    const j = await res.json();
+    return (j && j.token) || '';
+  } catch (_e) { return ''; }
+}
+
 async function main() {
   console.log('\n=== Dashboard 渲染冒烟测试 ===\n');
   console.log(`目标：${BASE}\n`);
@@ -377,6 +388,48 @@ async function main() {
     doc.getElementById('eulaCloseBtn2').click();
     await sleep(150);
     check('只读回看可正常关闭', !eulaVisible());
+  }
+
+  // ---- 跨局域网访问：`?token=` 免手工输入 ----
+  // 局域网访问时服务端不下发令牌，`?token=` 是唯一的零配置路径；
+  // 顺带断言令牌会被立刻从地址栏抹掉（不留在浏览历史、书签与随手截图里）。
+  if (IS_LOOPBACK) {
+    const key = await getAdminToken();
+    if (!key) {
+      check('取到管理令牌用于 ?token= 校验', false, 'bootstrap 未返回令牌');
+    } else {
+      const scriptErrors2 = [];
+      const vc2 = new VirtualConsole();
+      vc2.on('jsdomError', (e) => scriptErrors2.push(e.message));
+      const dom2 = new JSDOM(html, {
+        url: `${BASE}/?token=${encodeURIComponent(key)}`,
+        runScripts: 'dangerously',
+        resources: 'usable',
+        pretendToBeVisual: true,
+        virtualConsole: vc2,
+        beforeParse(window) {
+          window.fetch = (input, init) => {
+            const url = typeof input === 'string' ? input : (input && input.url) || String(input);
+            return fetch(new URL(url, `${BASE}/`).toString(), init);
+          };
+          window.ResizeObserver = class {
+            observe() {}
+            unobserve() {}
+            disconnect() {}
+          };
+        },
+      });
+      const d2 = dom2.window.document;
+      const calls2 = () => (d2.getElementById('statCalls') || {}).textContent || '';
+      const ok2 = await waitFor(() => calls2() && calls2() !== '--', 15000);
+      check('带 ?token= 打开即可直接取到数据（无需手工输入令牌）', !!ok2, `累计调用 ${calls2()}`);
+      const search = String(dom2.window.location.search || '');
+      check('令牌已从地址栏抹掉（不留在历史 / 书签 / 截图里）',
+        !search.includes('token'), `地址栏 query=${JSON.stringify(search)}`);
+      check('?token= 打开无脚本错误', scriptErrors2.length === 0,
+        scriptErrors2.slice(0, 2).join(' | ') || '无错误');
+      dom2.window.close();
+    }
   }
 
   check('整个渲染过程无脚本错误', scriptErrors.length === 0, scriptErrors.slice(0, 3).join(' | ') || '无错误');
