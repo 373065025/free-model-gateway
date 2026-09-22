@@ -25,6 +25,7 @@ const { passthrough } = require('./upstream');
 const updater = require('./updater');
 const eula = require('./eula');
 const notify = require('./notify');
+const backup = require('./backup');
 const {
   logger,
   maskKey,
@@ -422,6 +423,20 @@ function createApp(options = {}) {
   try { updater.init(ctx); } catch (_e) { /* 更新子系统可选，初始化失败不影响主服务 */ }
 
   // 管理接口处理（由 route 通过 await handleAdmin(...) 调用）
+  /** 读请求体并解析成 JSON；不合法时直接回 400 并返回 null，调用方据此短路 */
+  async function readBodyJson(req, res) {
+    let text = '';
+    try {
+      text = await readBody(req);
+    } catch (_e) { /* 读失败按空处理 */ }
+    try {
+      return JSON.parse(text || '{}');
+    } catch (_e) {
+      sendJson(res, 400, { error: { message: '请求体不是合法 JSON' } });
+      return null;
+    }
+  }
+
   async function handleAdmin(req, res, url, pathname) {
     // 打开 Dashboard 时自动取一次令牌。判定见 mayAutoIssueToken()：
     // 网关所在机器自己 → 永远放行；同一私有网段 → 默认放行（trustLan）；
@@ -556,6 +571,67 @@ function createApp(options = {}) {
     if (pathname === '/admin/api/reload' && req.method === 'POST') {
       reload();
       sendJson(res, 200, { ok: true, providers: ctx.cfg.providers.length, models: ctx.cfg.registry.models.size });
+      return;
+    }
+
+    // ===== 配置备份与恢复 =====
+    // 导出：POST { secrets?: bool, password?: string }
+    // 返回 { ok, filename, backup }，由前端触发下载（口令走请求体，不进 URL / 访问日志）。
+    if (pathname === '/admin/api/backup/export' && req.method === 'POST') {
+      const body = await readBodyJson(req, res);
+      if (!body) return;
+      const secrets = body.secrets !== false;
+      const password = String(body.password || '').trim();
+      if (password && password.length < 6) {
+        sendJson(res, 400, { error: { message: '加密口令至少 6 位；留空则导出明文备份' } });
+        return;
+      }
+      const env = backup.build(ctx, { secrets, password });
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+      sendJson(res, 200, {
+        ok: true,
+        filename: `free-model-gateway-backup-${stamp}.json`,
+        backup: env,
+        message: password
+          ? `已生成加密备份（${env.includesSecrets ? '含' : '不含'}密钥），请妥善保管口令——丢了就无法恢复这份备份`
+          : `已生成明文备份（${env.includesSecrets ? '含' : '不含'}密钥），文件里就是原始配置，请注意保管`,
+      });
+      return;
+    }
+
+    // 恢复：POST { backup: <导出的信封>, password?, preview? }
+    // preview=true 只解析并返回摘要，不落盘——让用户先看清要恢复什么再确认。
+    if (pathname === '/admin/api/backup/restore' && req.method === 'POST') {
+      const body = await readBodyJson(req, res);
+      if (!body) return;
+      const raw = body.backup || body.data || body.file || null;
+      const parsed = backup.parse(raw, String(body.password || ''));
+      if (!parsed.ok) {
+        sendJson(res, 400, { error: { message: parsed.error } });
+        return;
+      }
+      if (body.preview) {
+        sendJson(res, 200, {
+          ok: true,
+          preview: true,
+          summary: parsed.summary,
+          restoreScope: backup.RESTORE_SCOPE,
+          exportedAt: raw.exportedAt || '',
+          encrypted: !!raw.encrypted,
+          includesSecrets: raw.includesSecrets !== false,
+        });
+        return;
+      }
+      const applied = backup.apply(ctx, parsed.data);
+      reload();
+      const s = parsed.summary;
+      log.info(`[backup] 已恢复配置备份（${applied.files.join(', ')}；渠道 ${s.channels}，密钥 ${s.keys}）`);
+      sendJson(res, 200, {
+        ok: true,
+        applied,
+        summary: s,
+        message: `已恢复 ${applied.files.length} 份配置：渠道 ${s.channels} 个（启用 ${s.enabledChannels}），密钥 ${s.keys} 个`,
+      });
       return;
     }
 

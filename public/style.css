@@ -545,6 +545,7 @@ body {
   -webkit-backdrop-filter: saturate(180%) blur(8px);
   backdrop-filter: saturate(180%) blur(8px);
 }
+#eulaModal { z-index: 90; } /* 同意书永远盖在设置弹窗之上 */
 .modal {
   width: min(760px, 100%); max-height: min(86vh, 840px); display: flex; flex-direction: column;
   background: var(--card); border: 1px solid var(--border);
@@ -596,6 +597,31 @@ body.modal-open { overflow: hidden; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 999px; }
 ::-webkit-scrollbar-thumb:hover { filter: brightness(.86); }
+
+/* ============================== 统一设置弹窗 ============================== */
+.settings-modal { width: min(680px, 100%); }
+.settings-tabs {
+  margin: 14px 24px 0; flex: 0 0 auto; align-self: flex-start;
+}
+.settings-body { display: flex; flex-direction: column; gap: 0; }
+.tab-pane { display: flex; flex-direction: column; gap: 12px; }
+.tab-pane.hidden { display: none; }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+.settings-info {
+  border: 1px solid var(--border-soft); border-radius: var(--radius-xs);
+  background: var(--bg-soft); padding: 10px 12px;
+  font-size: 12px; line-height: 1.8; color: var(--text-2);
+}
+.settings-info b { font-family: var(--mono); color: var(--text); font-size: 11.5px; }
+.backup-block {
+  border: 1px solid var(--border-soft); border-radius: var(--radius-xs);
+  background: var(--bg-soft); padding: 14px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.backup-title { font-size: 13.5px; margin: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }

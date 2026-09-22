@@ -440,11 +440,116 @@ async function main() {
     check('错误客户端密钥返回 401 与明确提示', r.status === 401 && !!r.json.error.code, `状态 ${r.status}`);
   }
 
+  console.log('\n--- 第二点五阶段：配置备份与恢复（含加密） ---\n');
+
+  // 备份会真实写回 4 份配置文件。先快照，测试完原样还原，绝不污染本机配置。
+  const backupFiles = [
+    cfg.paths.providersFile,
+    cfg.paths.keysFile,
+    path.join(cfg.paths.configDir, 'notify-config.json'),
+    path.join(cfg.paths.configDir, 'update-config.json'),
+  ];
+  const backupSnapshot = backupFiles.map((f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf-8') : null));
+  const restoreSnapshot = () => {
+    backupFiles.forEach((f, i) => {
+      try {
+        if (backupSnapshot[i] === null) fs.rmSync(f, { force: true });
+        else fs.writeFileSync(f, backupSnapshot[i], 'utf-8');
+      } catch (_e) { /* 还原失败不掩盖测试结果 */ }
+    });
+  };
+
+  {
+    // 20. 明文导出：信封结构完整、含校验和、默认不含同意状态与网关密钥
+    const exp = await request(base, {
+      path: adminPath('/admin/api/backup/export'), method: 'POST', body: { secrets: true },
+    });
+    check('明文导出返回 200 与备份信封',
+      exp.status === 200 && exp.json.ok && exp.json.backup && exp.json.backup.kind === 'free-model-gateway-backup',
+      `状态 ${exp.status}`);
+    check('明文备份包含 SHA-256 校验和与渠道数据',
+      exp.json.backup.checksum && exp.json.backup.data && exp.json.backup.data.providers,
+      `checksum ${exp.json.backup.checksum ? '存在' : '缺失'}`);
+    check('备份不含用户协议状态与网关密钥',
+      !exp.json.backup.data.eula && !exp.json.backup.data.gatewayKey,
+      'eula / gatewayKey 未进备份');
+    const filename = exp.json.filename || '';
+
+    // 21. 明文恢复：先 preview（不落盘），再 apply
+    const pv = await request(base, {
+      path: adminPath('/admin/api/backup/restore'), method: 'POST',
+      body: { backup: exp.json.backup, preview: true },
+    });
+    check('恢复预览返回渠道与密钥摘要且不写盘',
+      pv.status === 200 && pv.json.preview && typeof pv.json.summary.channels === 'number',
+      `渠道 ${pv.json && pv.json.summary && pv.json.summary.channels}`);
+
+    const ap = await request(base, {
+      path: adminPath('/admin/api/backup/restore'), method: 'POST',
+      body: { backup: exp.json.backup },
+    });
+    check('恢复执行成功并写回配置文件',
+      ap.status === 200 && Array.isArray(ap.json.applied.files) && ap.json.applied.files.includes('providers.json'),
+      `写入 ${ap.json && ap.json.applied && ap.json.applied.files && ap.json.applied.files.join(',')}`);
+    check('导出的文件名带时间戳且可作下载名', /^free-model-gateway-backup-\d{8}-\d{6}\.json$/.test(filename), filename);
+
+    // 22. 加密导出 + 错误口令必须被拒绝
+    const enc = await request(base, {
+      path: adminPath('/admin/api/backup/export'), method: 'POST', body: { password: '自检口令abc123' },
+    });
+    check('加密导出返回加密信封（AES-256-GCM）',
+      enc.status === 200 && enc.json.backup.encrypted === true && enc.json.backup.cipher === 'AES-256-GCM',
+      `cipher ${enc.json.backup && enc.json.backup.cipher}`);
+    check('加密备份不含明文 data 对象与校验和（data 是 base64 密文）',
+      !enc.json.backup.checksum && typeof enc.json.backup.data === 'string'
+      && !enc.json.backup.data.providers && !enc.json.backup.data.notify,
+      '无 checksum，data 为密文字符串');
+
+    const badPw = await request(base, {
+      path: adminPath('/admin/api/backup/restore'), method: 'POST',
+      body: { backup: enc.json.backup, password: '绝对错误的口令' },
+    });
+    check('错误口令恢复被拒绝（400）',
+      badPw.status === 400 && /口令/.test((badPw.json.error && badPw.json.error.message) || ''),
+      badPw.json && badPw.json.error && badPw.json.error.message);
+
+    // 23. 正确口令 + 缺口令的拒绝路径
+    const okPw = await request(base, {
+      path: adminPath('/admin/api/backup/restore'), method: 'POST',
+      body: { backup: enc.json.backup, password: '自检口令abc123', preview: true },
+    });
+    check('正确口令可解密并预览', okPw.status === 200 && okPw.json.preview && okPw.json.encrypted === true,
+      `状态 ${okPw.status}`);
+    const noPw = await request(base, {
+      path: adminPath('/admin/api/backup/restore'), method: 'POST',
+      body: { backup: enc.json.backup, preview: true },
+    });
+    check('加密备份缺口令时提示输入口令',
+      noPw.status === 400 && /口令/.test((noPw.json.error && noPw.json.error.message) || ''),
+      noPw.json && noPw.json.error && noPw.json.error.message);
+
+    // 24. 非本应用文件 / 篡改校验和必须被拒绝
+    const alien = await request(base, {
+      path: adminPath('/admin/api/backup/restore'), method: 'POST',
+      body: { backup: { kind: 'other-app-backup', data: {} } },
+    });
+    check('非本应用的备份文件被拒绝', alien.status === 400, `状态 ${alien.status}`);
+    const tampered = JSON.parse(JSON.stringify(exp.json.backup));
+    tampered.data.providers.providers = [];
+    const tam = await request(base, {
+      path: adminPath('/admin/api/backup/restore'), method: 'POST',
+      body: { backup: tampered },
+    });
+    check('明文备份被篡改后校验和不匹配、拒绝恢复', tam.status === 400,
+      (tam.json.error && tam.json.error.message) || `状态 ${tam.status}`);
+  }
+
   broken.server.close();
   app.close();
   app.server.close();
 
-  // 还原自检前的同意状态与推送配置，避免测试污染开发者本机的真实使用状态
+  // 还原自检前的同意状态、推送配置与备份涉及的配置文件，避免污染开发者本机
+  restoreSnapshot();
   if (!eulaAcceptedBefore) eula.revoke();
   if (notifyBefore === null) {
     try { fs.rmSync(NOTIFY_FILE, { force: true }); } catch (_e) { /* ignore */ }

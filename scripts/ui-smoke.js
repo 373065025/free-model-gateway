@@ -336,19 +336,34 @@ async function main() {
       `data-pref=${rootEl.getAttribute('data-pref')}`);
   }
 
-  // 设置浮层（管理令牌）
+  // 统一设置弹窗：齿轮开关 + 标签页切换
   const gear = doc.getElementById('settingsBtn');
-  const panel = doc.getElementById('settingsPanel');
-  if (gear && panel) {
-    const startHidden = panel.classList.contains('hidden');
+  const settingsModal = doc.getElementById('settingsModal');
+  if (gear && settingsModal) {
+    const startHidden = settingsModal.classList.contains('hidden');
     gear.click();
     await sleep(100);
-    const opened = !panel.classList.contains('hidden');
-    doc.body.click();
+    const opened = !settingsModal.classList.contains('hidden');
+    const tabs = doc.getElementById('settingsTabs');
+    const backupTab = tabs && tabs.querySelector('.seg-btn[data-tab="backup"]');
+    if (backupTab) backupTab.click();
+    await sleep(80);
+    const backupPane = doc.querySelector('#settingsModal .tab-pane[data-pane="backup"]');
+    const generalPane = doc.querySelector('#settingsModal .tab-pane[data-pane="general"]');
+    const tabSwitched = backupPane && !backupPane.classList.contains('hidden')
+      && generalPane && generalPane.classList.contains('hidden');
+    const closeBtn = doc.getElementById('settingsCloseBtn');
+    if (closeBtn) closeBtn.click();
     await sleep(100);
-    const closed = panel.classList.contains('hidden');
-    check('齿轮按钮可开合设置浮层', startHidden && opened && closed,
-      `初始隐藏=${startHidden} 点击后显示=${opened} 点外部后收起=${closed}`);
+    const closed = settingsModal.classList.contains('hidden');
+    check('齿轮按钮可打开统一设置弹窗并切换到备份页签',
+      startHidden && opened && tabSwitched,
+      `初始隐藏=${startHidden} 打开=${opened} 切页签=${tabSwitched}`);
+    check('设置弹窗可通过关闭按钮收起', closed, `关闭后隐藏=${closed}`);
+    check('备份页签包含导出与恢复入口',
+      !!doc.getElementById('backupExportBtn') && !!doc.getElementById('backupRestoreBtn')
+      && !!doc.getElementById('backupFile') && !!doc.getElementById('backupPassword'),
+      'backupExportBtn / backupFile / backupPassword / backupRestoreBtn');
   }
 
   check('更新源默认指向官方仓库',

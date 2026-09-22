@@ -49,6 +49,8 @@
 | 并发保护 | 每个 key 可设并发上限，打满自动换 key；客户端断开即刻取消上游请求，不浪费额度 |
 | 许可与免责同意书 | 首次启动（及同意书升版后）弹出完整条款，**不点同意就不放行任何接口**；同意记录纯本地保存，含 10 章免责/合规/隐私条款 |
 | 每日推送日报 | 每天定时把用量汇总（调用次数 / Token / 成功率 / 延迟 / 渠道健康度）推送到微信，基于 [PushPlus](https://www.pushplus.plus/)，默认关闭、token 只存本机 |
+| 统一设置页 | 大屏右上角齿轮统一收纳：管理令牌 / 每日推送 / 自动更新 / 备份与恢复四个页签，首页只保留核心监控信息 |
+| 配置备份与恢复 | 一键导出渠道、密钥、推送与更新源配置为 JSON 文件，可选 AES-256-GCM 口令加密（PBKDF2 21 万次迭代，口令不落盘）；恢复前先预览摘要再确认，换机迁移配置一步到位 |
 
 ---
 
@@ -63,9 +65,9 @@ node src/index.js
 # 2) 打开监控大屏
 #    http://127.0.0.1:8787/
 
-# 3) 自检：57 项端到端断言，覆盖同意书门禁/鉴权/流式/故障转移/熔断/计量/推送/大屏
+# 3) 自检：70 项端到端断言，覆盖同意书门禁/鉴权/流式/故障转移/熔断/计量/推送/备份/大屏
 node scripts/selfcheck.js
-#    （可选）再跑一遍大屏渲染冒烟：node scripts/ui-smoke.js   —— 61 项
+#    （可选）再跑一遍大屏渲染冒烟：node scripts/ui-smoke.js   —— 63 项
 #    （可选）更新子系统：node scripts/test-updater.js        —— 50 项
 ```
 
@@ -167,7 +169,7 @@ print("实际由", resp.x_gateway["provider_name"], "提供")   # 一眼看清�
 
 ### 6.1 安装
 
-产物就在项目根目录：**`free-model-gateway1.2.5.fpk`**（约 130 KB）
+产物就在项目根目录：**`free-model-gateway1.2.6.fpk`**（约 130 KB）
 
 1. 飞牛 fnOS → 应用中心 → 我的应用 → 右上角「安装应用」（或「手动安装」）
 2. 选择这个 `.fpk` 文件，一路下一步
@@ -215,15 +217,15 @@ python tools/verify_fpk.py       # 解包后按 NAS 的方式真跑一次，确�
 
 ```bash
 # 1) 改版本号（两处保持一致）
-#    fnos/manifest   version = 1.2.5
-#    package.json    "version": "1.2.5"
+#    fnos/manifest   version = 1.2.6
+#    package.json    "version": "1.2.6"
 
 # 2) 打标签并推送 —— 触发 .github/workflows/release.yml
-git tag v1.2.5
-git push origin v1.2.5
+git tag v1.2.6
+git push origin v1.2.6
 ```
 
-CI 会自动：跑端到端自检 + 大屏冒烟 → 打包 `.fpk` → 生成 `free-model-gateway-1.2.5.tgz` 与 `.sha256` → 发布 Release。
+CI 会自动：跑端到端自检 + 大屏冒烟 → 打包 `.fpk` → 生成 `free-model-gateway-1.2.6.tgz` 与 `.sha256` → 发布 Release。
 之后在网关面板点「检查更新」即可看到新版本并一键升级。
 
 > 本地预生成（不推 GitHub 时）：

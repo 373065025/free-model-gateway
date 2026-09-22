@@ -241,9 +241,8 @@ async function load() {
     render();
   } catch (err) {
     if (err.status === 401) {
-      showAlert('需要管理令牌才能查看数据。最省事是用 http://<网关地址>:8790/?token=<管理令牌> 打开本页；也可以点右上角齿轮图标手工填入。令牌在 NAS 数据目录的 gateway-key.txt 里，也打印在启动日志中。从本机 127.0.0.1 访问会自动填充。');
-      const panel = $('settingsPanel');
-      if (panel) panel.classList.remove('hidden');
+      showAlert('需要管理令牌才能查看数据。内网访问会自动填充；其他设备请点右上角齿轮图标手工填入，或用 http://<网关地址>:8790/?token=<管理令牌> 打开本页（令牌在 NAS 数据目录的 gateway-key.txt 里，也打印在启动日志中）。');
+      openSettings('general');
     } else if (err.code === 'eula_required') {
       // 同意书弹窗已由 api() 自动触发，这里不再叠加错误提示
     } else {
@@ -460,6 +459,7 @@ function renderLeaderboard(d) {
 function renderGateway(d) {
   $('baseUrl').textContent = d.gateway.baseUrl;
   $('clientKey').textContent = d.gateway.clientKey;
+  renderSettingsInfo(d);
   renderSnippet(d);
 }
 
@@ -678,6 +678,8 @@ function renderUpdate(d) {
   $('updateCurrent').textContent = cur;
   $('updateLatest').textContent = upd.latest || cur;
   $('updateBadge').classList.toggle('hidden', !upd.hasUpdate);
+  const badgeTop = $('updateBadgeTop');
+  if (badgeTop) badgeTop.classList.toggle('hidden', !upd.hasUpdate);
   if (upd.hasUpdate) {
     $('updateSummary').textContent = `发现新版本 ${upd.latest}`;
   } else if (upd.checkedAt) {
@@ -854,6 +856,7 @@ function eulaFoot(which) {
 function openEulaMask() {
   const mask = $('eulaModal');
   if (mask && mask.classList.contains('hidden')) {
+    closeSettings(); // 同意书优先：未同意时不能让设置弹窗盖在它上面
     mask.classList.remove('hidden');
     document.body.classList.add('modal-open');
   }
@@ -1130,8 +1133,166 @@ async function sendNotifyNow() {
   }
 }
 
+/* ------------------------------------------------------------- 统一设置 */
+/** 当前打开的设置标签页；null = 弹窗关闭 */
+let settingsTab = null;
+
+function switchSettingsTab(tab) {
+  settingsTab = tab || 'general';
+  const tabs = $('settingsTabs');
+  if (tabs) {
+    tabs.querySelectorAll('.seg-btn').forEach((b) => {
+      b.classList.toggle('active', b.getAttribute('data-tab') === settingsTab);
+    });
+  }
+  document.querySelectorAll('#settingsModal .tab-pane').forEach((p) => {
+    p.classList.toggle('hidden', p.getAttribute('data-pane') !== settingsTab);
+  });
+  // 切到哪个标签就加载哪个标签的数据
+  if (settingsTab === 'notify') loadNotify();
+  if (settingsTab === 'update') { refreshUpdateState(); loadUpdateConfig(); }
+}
+
+function openSettings(tab) {
+  const modal = $('settingsModal');
+  if (!modal) return;
+  const eulaMask = $('eulaModal');
+  if (eulaMask && !eulaMask.classList.contains('hidden')) return; // 同意书未关闭时不打开设置
+  const wasHidden = modal.classList.contains('hidden');
+  modal.classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  const input = $('tokenInput');
+  if (input) input.value = state.token;
+  if (wasHidden || tab) switchSettingsTab(tab || settingsTab || 'general');
+}
+
+function closeSettings() {
+  const modal = $('settingsModal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  modal.classList.add('hidden');
+  document.body.classList.remove('modal-open');
+  settingsTab = null;
+}
+
+/** 通用标签页里的网关概要信息 */
+function renderSettingsInfo(d) {
+  const el = $('settingsGatewayInfo');
+  if (!el || !d || !d.gateway) return;
+  const upd = d.gateway.update || {};
+  el.innerHTML = `接口地址 <b>${esc(d.gateway.baseUrl)}</b> · 网关 v${esc(d.gateway.version || '?')} · 端口 ${esc(d.gateway.port)}`
+    + (upd.hasUpdate ? ` · <span class="c-gold">可更新到 v${esc(upd.latest)}</span>` : '');
+}
+
+/* ----------------------------------------------------------- 备份与恢复 */
+let backupPending = null; // 预览通过后待恢复的 { raw, password }
+
+function backupMsg(boxId, html, isErr) {
+  const box = $(boxId);
+  if (!box) return;
+  if (!html) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="tr-content" style="${isErr ? 'color:var(--red)' : ''}">${html}</div>`;
+}
+
+async function exportBackup() {
+  const btn = $('backupExportBtn');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '导出中…';
+  try {
+    const password = $('backupPassword').value.trim();
+    const r = await api('/admin/api/backup/export', {
+      method: 'POST',
+      body: JSON.stringify({ secrets: $('backupSecrets').checked, password }),
+    });
+    const blob = new Blob([JSON.stringify(r.backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = r.filename || 'free-model-gateway-backup.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    backupMsg('backupExportMsg', esc(r.message || '已导出。') + ' 文件已开始下载。');
+    $('backupPassword').value = '';
+  } catch (err) {
+    backupMsg('backupExportMsg', `导出失败：${esc(err.message)}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function previewBackup() {
+  const fileInput = $('backupFile');
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  if (!file) { backupMsg('backupRestoreMsg', '请先选择备份文件。', true); return; }
+  const btn = $('backupPreviewBtn');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '解析中…';
+  backupMsg('backupRestoreMsg', '');
+  try {
+    let raw;
+    try { raw = JSON.parse(await file.text()); }
+    catch (_e) { throw new Error('文件不是有效的 JSON，请确认选的是导出的备份文件'); }
+    const password = $('backupRestorePassword').value;
+    const r = await api('/admin/api/backup/restore', {
+      method: 'POST',
+      body: JSON.stringify({ backup: raw, password, preview: true }),
+    });
+    backupPending = { raw, password };
+    const s = r.summary || {};
+    const box = $('backupPreview');
+    box.classList.remove('hidden');
+    box.innerHTML = `<div class="np-title">备份解析成功${r.encrypted ? ' · 已通过口令解密' : ''}${r.includesSecrets ? ' · 含密钥' : ' · 不含密钥'}${r.exportedAt ? ` · 导出于 ${new Date(r.exportedAt).toLocaleString('zh-CN')}` : ''}</div>
+      <div class="tr-content">渠道 <b>${esc(s.channels)}</b> 个（启用 ${esc(s.enabledChannels)}） · API 密钥 <b>${esc(s.keys)}</b> 个
+      · 推送配置：${esc(s.notify)} · 更新源：${esc(s.update)}</div>
+      <div class="tr-meta">${esc(r.restoreScope || '')}</div>`;
+    $('backupRestoreBtn').disabled = false;
+  } catch (err) {
+    backupPending = null;
+    $('backupRestoreBtn').disabled = true;
+    $('backupPreview').classList.add('hidden');
+    backupMsg('backupRestoreMsg', `解析失败：${esc(err.message)}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function restoreBackup() {
+  if (!backupPending) return;
+  if (!confirm('确认用这份备份覆盖当前配置？受影响的配置会被立即替换，且无法撤销。')) return;
+  const btn = $('backupRestoreBtn');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '恢复中…';
+  try {
+    const r = await api('/admin/api/backup/restore', {
+      method: 'POST',
+      body: JSON.stringify({ backup: backupPending.raw, password: backupPending.password }),
+    });
+    backupPending = null;
+    $('backupPreview').classList.add('hidden');
+    $('backupFile').value = '';
+    $('backupRestorePassword').value = '';
+    backupMsg('backupRestoreMsg', esc(r.message || '已恢复。') + ' 配置已生效。');
+    await load();
+    await loadNotify();
+    await loadUpdateConfig();
+  } catch (err) {
+    backupMsg('backupRestoreMsg', `恢复失败：${esc(err.message)}`, true);
+    btn.disabled = false;
+  } finally {
+    btn.textContent = '确认恢复';
+  }
+}
+
 /* ----------------------------------------------------------------- 交互 */
 function bindEvents() {
+  const bind = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
   $('refreshBtn').addEventListener('click', load);
 
   // 主题切换：自动 / 浅色 / 深色
@@ -1144,24 +1305,38 @@ function bindEvents() {
     });
   }
 
-  // 设置浮层（管理令牌）
+  // 统一设置弹窗：通用（管理令牌）/ 每日推送 / 自动更新 / 备份与恢复
   const settingsBtn = $('settingsBtn');
-  const settingsPanel = $('settingsPanel');
-  const toggleSettings = (force) => {
-    if (!settingsPanel || !settingsBtn) return;
-    const show = typeof force === 'boolean' ? force : settingsPanel.classList.contains('hidden');
-    settingsPanel.classList.toggle('hidden', !show);
-    settingsBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
-  };
-  if (settingsBtn) {
-    settingsBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      toggleSettings();
+  const settingsModal = $('settingsModal');
+  const settingsTabs = $('settingsTabs');
+  if (settingsBtn && settingsModal) {
+    settingsBtn.addEventListener('click', () => openSettings());
+  }
+  bind('settingsCloseBtn', closeSettings);
+  if (settingsModal) {
+    settingsModal.addEventListener('click', (ev) => {
+      if (ev.target === settingsModal) closeSettings();
     });
   }
-  if (settingsPanel) settingsPanel.addEventListener('click', (ev) => ev.stopPropagation());
-  document.addEventListener('click', () => toggleSettings(false));
-  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') toggleSettings(false); });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') closeSettings();
+  });
+  if (settingsTabs) {
+    settingsTabs.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.seg-btn');
+      if (btn) switchSettingsTab(btn.getAttribute('data-tab'));
+    });
+  }
+  const badgeTop = $('updateBadgeTop');
+  if (badgeTop) {
+    badgeTop.addEventListener('click', () => openSettings('update'));
+    badgeTop.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') openSettings('update');
+    });
+  }
+  bind('backupExportBtn', exportBackup);
+  bind('backupPreviewBtn', previewBackup);
+  bind('backupRestoreBtn', restoreBackup);
 
   const tokenInput = $('tokenInput');
   if (tokenInput) {
@@ -1302,7 +1477,6 @@ function bindEvents() {
       $('eulaAcceptBtn').disabled = !eulaAgree.checked;
     });
   }
-  const bind = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
   bind('eulaAcceptBtn', acceptEula);
   bind('eulaDeclineBtn', () => eulaFoot('eulaDeclinedFoot'));
   bind('eulaBackBtn', () => eulaFoot('eulaFoot'));
