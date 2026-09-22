@@ -2,7 +2,8 @@
 
 把散落在各家平台的**免费大模型额度**汇总成**一个 OpenAI 兼容入口**，集中给你所有的 AI 客户端（Cherry Studio / NextChat / LobeChat / Cursor / Cline / Dify / 自写脚本…）调用。
 
-零第三方依赖，只用 Node 内置模块 —— 不用 `npm install`，整包约 93 KB，装在 NAS 上也不吃资源。
+零第三方依赖，只用 Node 内置模块 —— 不用 `npm install`，整包约 100 KB，装在 NAS 上也不吃资源。
+监控大屏是 Apple 风格的现代界面，**浅色 / 深色 / 跟随系统**三态主题一键切换。
 推送 `v*` 标签即由 GitHub Actions 自动打包发布，网关可从 GitHub Releases 一键热更新。
 
 ```
@@ -36,9 +37,9 @@
 | 模型别名 | 同一个模型在 5 个渠道有 5 个不同 id，网关统一成 `deepseek-r1`、`llama-3.3-70b` 这样的名字 |
 | 免费模型自动发现 | 每小时拉取各平台官方模型列表，按渠道的免费特征过滤后自动纳入调度（免费清单变了你不用管） |
 | 用量统计 | 累计调用、输入/输出 tokens、按模型/渠道聚合、29 天趋势、模型排行榜、峰值日 |
-| 监控大屏 | 暗色 + 金色的实时 Dashboard，含渠道健康、密钥池、模型清单、请求日志、在线自测 |
+| 监控大屏 | Apple 风格的实时 Dashboard：**浅色 / 深色 / 跟随系统**三态主题，含渠道健康、密钥池、模型清单、请求日志、在线自测 |
 | 一键打包 | `tools/build_fpk.py` 直接产出飞牛 fnOS 可安装的 `.fpk` |
-| 自动更新 | 面板填 GitHub 仓库即可检查 / 下载 / 校验 / 热替换 / 自重启；用户密钥与渠道配置永不覆盖，支持回滚 |
+| 自动更新 | 更新源**默认指向官方仓库**，开箱即用无需配置；检查 / 下载 / 校验 / 热替换 / 自重启，用户密钥与渠道配置永不覆盖，支持回滚 |
 | 并发保护 | 每个 key 可设并发上限，打满自动换 key；客户端断开即刻取消上游请求，不浪费额度 |
 
 ---
@@ -56,6 +57,7 @@ node src/index.js
 
 # 3) 自检：31 项端到端断言，覆盖鉴权/流式/故障转移/熔断/计量/大屏
 node scripts/selfcheck.js
+#    （可选）再跑一遍大屏渲染冒烟：node scripts/ui-smoke.js
 ```
 
 启动后终端会打印**访问密钥**（形如 `gw-1d70d66297453f60`），它同时是 Dashboard 的管理令牌。
@@ -156,7 +158,7 @@ print("实际由", resp.x_gateway["provider_name"], "提供")   # 一眼看清�
 
 ### 6.1 安装
 
-产物就在项目根目录：**`free-model-gateway1.2.0.fpk`**（约 93 KB）
+产物就在项目根目录：**`free-model-gateway1.2.1.fpk`**（约 100 KB）
 
 1. 飞牛 fnOS → 应用中心 → 我的应用 → 右上角「安装应用」（或「手动安装」）
 2. 选择这个 `.fpk` 文件，一路下一步
@@ -193,11 +195,12 @@ python tools/verify_fpk.py       # 解包后按 NAS 的方式真跑一次，确�
 
 ### 6.4 从 GitHub Releases 一键自动更新
 
-网关自带热更新：监控大屏 →「自动更新」→「更新源设置（GitHub）」里填仓库 `owner/repo`，之后它会：
+网关自带热更新，**更新源默认就是本项目官方仓库 `373065025/free-model-gateway`，无需任何配置**。
+打开监控大屏 →「自动更新」→ 点「检查更新」即可，它会：
 
 请求 GitHub 的 `/releases/latest` → 比对版本 → 下载 Release 里附带的 `free-model-gateway-<版本>.tgz`
 → 校验 sha256 → 备份并热替换 `server/ ui/ manifest` → 自重启。
-**用户密钥与渠道配置（`config/`、`server/config/`）永不覆盖。**
+**用户密钥与渠道配置（`config/`、`server/config/`）永不覆盖。** 面板每 6 小时也会自动检查一次。
 
 发布新版本的完整流程（推标签即全自动）：
 
@@ -211,7 +214,7 @@ git tag v1.2.1
 git push origin v1.2.1
 ```
 
-CI 会自动：跑 31 项自检 → 打包 `.fpk` → 生成 `free-model-gateway-1.2.1.tgz` 与 `.sha256` → 发布 Release。
+CI 会自动：跑端到端自检 → 打包 `.fpk` → 生成 `free-model-gateway-1.2.1.tgz` 与 `.sha256` → 发布 Release。
 之后在网关面板点「检查更新」即可看到新版本并一键升级。
 
 > 本地预生成（不推 GitHub 时）：
@@ -221,22 +224,24 @@ CI 会自动：跑 31 项自检 → 打包 `.fpk` → 生成 `free-model-gateway
 > node tools/make-update.js     # 产出 build/update/{update.json, free-model-gateway-<版本>.tgz}
 > ```
 >
-> 想用自建 / 镜像更新源，在面板「高级：自定义 / 镜像更新源」里填 `update.json` 地址即可（GitHub 拉不动时的备用通道）。
+> 高级用户仍可在 `config/update-config.json` 里用 `githubRepo` 指向自己的 fork / 私有仓库，
+> 或用 `githubToken` 提高 API 限额；前端不再暴露这些入口，界面保持极简。
 
 安全要点：下载内容先验 gzip 魔数（`1f 8b`）拦下登录页 HTML；有 sha256 就强校验（GitHub 资产取 API 自带的 `digest`，否则读同名 `.sha256`）；
-GitHub 令牌可选（私有仓库 / 提高 API 限额），只存本机配置目录，前端只回显「是否已配置」，绝不回发明文。
+GitHub 令牌可选（私有仓库 / 提高 API 限额），只存本机配置目录，前端绝不回发明文。
 
 ---
 
 ## 七、运维速查
 
 ```bash
-node src/index.js           # 启动
-node scripts/selfcheck.js   # 31 项端到端自检
-node scripts/test-updater.js # 33 项自动更新 / 安全逻辑单测（tar 解包、路径穿越、gzip 拦截、GitHub 通道）
-node scripts/discover.js    # 手动重新发现免费模型（会写 config/models.discovered.json）
-node scripts/seed-demo.js   # 灌 29 天演示数据
-node scripts/reset-data.js  # 清空统计（--all 连密钥一起重建）
+node src/index.js              # 启动
+node scripts/selfcheck.js      # 31 项端到端自检（鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 大屏）
+node scripts/ui-smoke.js       # 37 项 Dashboard 渲染冒烟（真实 DOM 里跑 app.js，含主题切换）
+node scripts/test-updater.js   # 33 项自动更新 / 安全逻辑单测（tar 解包、路径穿越、gzip 拦截、GitHub 通道）
+node scripts/discover.js       # 手动重新发现免费模型（会写 config/models.discovered.json）
+node scripts/seed-demo.js      # 灌 29 天演示数据
+node scripts/reset-data.js     # 清空统计（--all 连密钥一起重建）
 ```
 
 常用管理接口（都需要 `?token=<管理令牌>` 或 `x-admin-token` 头）：
@@ -253,7 +258,8 @@ node scripts/reset-data.js  # 清空统计（--all 连密钥一起重建）
 | `POST /admin/api/reload` | 重载配置（改完配置文件不用重启进程） |
 | `POST /admin/api/reset-stats` | 统计清零 |
 | `GET /admin/api/version` | 当前版本 + 最近一次更新检查结果 |
-| `PUT /admin/api/update/config` | 设置更新源（GitHub 仓库 / 自定义源） |
+| `GET /admin/api/update/config` | 查看生效的更新源（默认官方仓库，只读） |
+| `PUT /admin/api/update/config` | 高级：改写更新源（`githubRepo` / `githubToken`，供 fork、私有仓库使用） |
 | `POST /admin/api/update/check` | 立即检查更新 |
 | `POST /admin/api/update/apply` | 下载并热更新（后台任务，返回后轮询状态） |
 | `GET /admin/api/update/status` | 更新任务进度 |

@@ -181,6 +181,63 @@ async function main() {
     filter.dispatchEvent(new window.Event('input', { bubbles: true }));
   }
 
+  // 主题切换：浅色 / 深色 / 跟随系统
+  const rootEl = doc.documentElement;
+  const themeBtns = q('#themeSeg .seg-btn');
+  check('主题切换控件有三个选项', themeBtns.length === 3, `${themeBtns.length} 个`);
+  check('初始主题已写入 data-theme',
+    ['dark', 'light'].indexOf(rootEl.getAttribute('data-theme')) >= 0,
+    `data-theme=${rootEl.getAttribute('data-theme')} / data-pref=${rootEl.getAttribute('data-pref')}`);
+
+  const lightBtn = doc.querySelector('#themeSeg .seg-btn[data-theme="light"]');
+  const darkBtn = doc.querySelector('#themeSeg .seg-btn[data-theme="dark"]');
+  const sysBtn = doc.querySelector('#themeSeg .seg-btn[data-theme="system"]');
+  if (lightBtn && darkBtn && sysBtn) {
+    lightBtn.click();
+    await sleep(180);
+    const lightOk = rootEl.getAttribute('data-theme') === 'light'
+      && lightBtn.classList.contains('active')
+      && window.localStorage.getItem('fm-theme') === 'light';
+    const lightLine = doc.getElementById('trendChart').querySelector('path[stroke]');
+
+    darkBtn.click();
+    await sleep(180);
+    const darkOk = rootEl.getAttribute('data-theme') === 'dark'
+      && darkBtn.classList.contains('active')
+      && window.localStorage.getItem('fm-theme') === 'dark';
+    const darkLine = doc.getElementById('trendChart').querySelector('path[stroke]');
+
+    check('点击「浅色」切到浅色主题并落盘', lightOk, `data-theme=${rootEl.getAttribute('data-theme')}`);
+    check('点击「深色」切到深色主题并落盘', darkOk, `data-theme=${rootEl.getAttribute('data-theme')}`);
+    check('切换主题后趋势线按新主题重绘',
+      !!lightLine && !!darkLine && (lightLine.getAttribute('stroke') || '').length > 0,
+      `浅色 ${lightLine && lightLine.getAttribute('stroke')} → 深色 ${darkLine && darkLine.getAttribute('stroke')}`);
+
+    sysBtn.click();
+    await sleep(180);
+    check('点击「自动」恢复跟随系统',
+      rootEl.getAttribute('data-pref') === 'system' && sysBtn.classList.contains('active'),
+      `data-pref=${rootEl.getAttribute('data-pref')}`);
+  }
+
+  // 设置浮层（管理令牌）
+  const gear = doc.getElementById('settingsBtn');
+  const panel = doc.getElementById('settingsPanel');
+  if (gear && panel) {
+    const startHidden = panel.classList.contains('hidden');
+    gear.click();
+    await sleep(100);
+    const opened = !panel.classList.contains('hidden');
+    doc.body.click();
+    await sleep(100);
+    const closed = panel.classList.contains('hidden');
+    check('齿轮按钮可开合设置浮层', startHidden && opened && closed,
+      `初始隐藏=${startHidden} 点击后显示=${opened} 点外部后收起=${closed}`);
+  }
+
+  check('更新源默认指向官方仓库',
+    txt('updateSource').indexOf('373065025/free-model-gateway') >= 0, txt('updateSource'));
+
   check('整个渲染过程无脚本错误', scriptErrors.length === 0, scriptErrors.slice(0, 3).join(' | ') || '无错误');
 
   dom.window.close();

@@ -1,6 +1,6 @@
 {
   "name": "free-model-gateway",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "免费大模型聚合代理网关：把散落在各家平台的免费模型额度汇总成一个 OpenAI 兼容入口，集中提供给任意 AI 客户端调用。",
   "main": "src/index.js",

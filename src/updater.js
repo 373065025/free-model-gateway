@@ -31,6 +31,10 @@ const { spawn } = require('child_process');
 
 const WIN = process.platform === 'win32';
 
+// 默认更新源：本项目官方仓库。开箱即用，无需任何配置。
+// （高级用户可在 config/update-config.json 里用 githubRepo 覆盖，或用 githubToken 提高 API 限额）
+const DEFAULT_GITHUB_REPO = '373065025/free-model-gateway';
+
 // ============================================================ 应用根目录
 
 /**
@@ -132,48 +136,21 @@ function scrub(text) {
   return String(text || '').replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?/g, '***');
 }
 
-function absoluteUrl(baseUrl, u) {
-  if (!u) return '';
-  if (/^https?:\/\//i.test(u)) return u;
-  try { return new URL(u, baseUrl).toString(); } catch (_e) { return u; }
-}
-
-function legacyAuthHeaders(s) {
-  const headers = {};
-  const token = String(s.updateToken || '').trim();
-  if (token) { headers.Authorization = `Bearer ${token}`; return headers; }
-  const user = String(s.updateUser || '').trim();
-  const pwd = s.updatePassword || '';
-  if (user || pwd) headers.Authorization = 'Basic ' + Buffer.from(`${user}:${pwd}`, 'utf-8').toString('base64');
-  return headers;
-}
-
 // ============================================================ 更新源解析
+
+/** 生效的仓库：配置里有就用配置的，否则用内置默认仓库 */
+function effectiveRepo(s) {
+  const cfg = s || readUpdateConfig();
+  return normalizeGitHubRepo(cfg.githubRepo) || DEFAULT_GITHUB_REPO;
+}
 
 function resolveSources() {
   const s = readUpdateConfig();
-  const seen = new Set();
-  const out = [];
-  const add = (url, label, timeout, headers, kind) => {
-    const u = String(url || '').trim();
-    if (!u || seen.has(u)) return;
-    seen.add(u);
-    out.push({ url: u, label, timeout, headers: headers || {}, kind: kind || 'custom' });
-  };
-
-  // 主通道：GitHub Releases
-  const repo = normalizeGitHubRepo(s.githubRepo);
-  if (repo) {
-    const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'free-model-gateway' };
-    const tok = String(s.githubToken || '').trim();
-    if (tok) headers.Authorization = `Bearer ${tok}`;
-    add(githubApiUrl(repo), `GitHub（${repo}）`, 15000, headers, 'github');
-  }
-
-  // 高级通道：自定义 update.json（镜像 / 自建源）
-  add(s.updateUrl, '自定义更新源', 15000, legacyAuthHeaders(s), 'custom');
-  add(s.updateAltUrl, '备用更新源', 15000, legacyAuthHeaders(s), 'custom');
-  return out;
+  const repo = effectiveRepo(s);
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'free-model-gateway' };
+  const tok = String(s.githubToken || '').trim();
+  if (tok) headers.Authorization = `Bearer ${tok}`;
+  return [{ url: githubApiUrl(repo), label: `GitHub（${repo}）`, timeout: 15000, headers, kind: 'github' }];
 }
 
 // ============================================================ 网络
@@ -206,12 +183,9 @@ async function githubAssetSha(asset, assets, headers, timeout) {
 }
 
 async function fetchManifest(src) {
-  const url = src.url;
-  const h = Object.assign({}, src.headers || {});
+  const h = Object.assign({ Accept: 'application/vnd.github+json', 'User-Agent': 'free-model-gateway' }, src.headers || {});
   const timeout = src.timeout || 15000;
-  const gh = src.kind === 'github';
-  if (gh) { h.Accept = h.Accept || 'application/vnd.github+json'; h['User-Agent'] = h['User-Agent'] || 'free-model-gateway'; }
-  const resp = await fetchWithTimeout(url, h, timeout);
+  const resp = await fetchWithTimeout(src.url, h, timeout);
   if (!resp.ok) {
     if (resp.status === 404) throw new Error('更新源没有找到发布（404，仓库可能还没有 Release）');
     throw new Error(`更新清单拉取失败 HTTP ${resp.status}`);
@@ -219,32 +193,19 @@ async function fetchManifest(src) {
   const d = await resp.json();
   if (!d || typeof d !== 'object') throw new Error('更新清单不是合法 JSON');
 
-  if (gh) {
-    const assets = Array.isArray(d.assets) ? d.assets : [];
-    const asset = assets.find((a) => /\.tgz$/i.test(a.name))
-      || assets.find((a) => /\.fpk$/i.test(a.name))
-      || assets[0];
-    if (!asset) throw new Error('该 Release 没有可下载的资产（请在 Release 里附上 .tgz）');
-    return {
-      version: String(d.tag_name || '').replace(/^v/, ''),
-      notes: String(d.body || '').slice(0, 3000),
-      url: asset.browser_download_url,
-      size: asset.size || 0,
-      sha256: await githubAssetSha(asset, assets, h, timeout),
-      publishedAt: d.published_at || '',
-      source: 'github',
-    };
-  }
-
-  if (!d.version || !d.url) throw new Error('更新清单缺少 version 或 url 字段');
+  const assets = Array.isArray(d.assets) ? d.assets : [];
+  const asset = assets.find((a) => /\.tgz$/i.test(a.name))
+    || assets.find((a) => /\.fpk$/i.test(a.name))
+    || assets[0];
+  if (!asset) throw new Error('该 Release 没有可下载的资产（请在 Release 里附上 .tgz）');
   return {
-    version: String(d.version).replace(/^v/, ''),
-    notes: d.notes || '',
-    url: absoluteUrl(url, d.url),
-    size: d.size || 0,
-    sha256: d.sha256 || '',
-    publishedAt: d.publishedAt || '',
-    source: 'custom',
+    version: String(d.tag_name || '').replace(/^v/, ''),
+    notes: String(d.body || '').slice(0, 3000),
+    url: asset.browser_download_url,
+    size: asset.size || 0,
+    sha256: await githubAssetSha(asset, assets, h, timeout),
+    publishedAt: d.published_at || '',
+    source: 'github',
   };
 }
 

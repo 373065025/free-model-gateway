@@ -3,15 +3,30 @@
 /* 免费模型聚合网关 · 监控大屏脚本（零依赖原生实现） */
 
 const TOKEN_KEY = 'fmg.adminToken';
+const THEME_KEY = 'fm-theme';
+const THEMES = ['system', 'light', 'dark'];
 const METRIC_LABEL = { total: '总 Tokens', input: '输入 Tokens', output: '输出 Tokens', calls: '调用次数' };
 
+/* localStorage 在隐私模式 / 沙箱下可能抛错，统一兜底 */
+function lsGet(key, fallback) {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null || v === undefined ? fallback : v;
+  } catch (_e) { return fallback; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (_e) { /* 忽略 */ }
+}
+
 const state = {
-  token: localStorage.getItem(TOKEN_KEY) || '',
+  token: lsGet(TOKEN_KEY, ''),
+  theme: lsGet(THEME_KEY, 'system'),
   data: null,
   metric: 'total',
   snippet: 'curl',
   modelFilter: '',
   models: [],
+  updateCfg: null,
   timer: null,
 };
 
@@ -44,6 +59,74 @@ function esc(s) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
 }
+
+/* --------------------------------------------------------------- 主题 */
+/* 三态：system（跟随系统）/ light / dark。解析结果写进 <html data-theme>。 */
+
+function sysPrefersDark() {
+  try {
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  } catch (_e) { return false; }
+}
+
+function currentThemePref() {
+  const t = state.theme;
+  return THEMES.indexOf(t) >= 0 ? t : 'system';
+}
+
+function resolveTheme(pref) {
+  if (pref === 'light' || pref === 'dark') return pref;
+  return sysPrefersDark() ? 'dark' : 'light';
+}
+
+/** 把当前主题写进 DOM；图表颜色取自 CSS 变量，故重绘交给调用方决定 */
+function applyTheme() {
+  const pref = currentThemePref();
+  const root = document.documentElement;
+  root.setAttribute('data-theme', resolveTheme(pref));
+  root.setAttribute('data-pref', pref);
+}
+
+function renderTheme() {
+  const pref = currentThemePref();
+  const seg = $('themeSeg');
+  if (!seg) return;
+  seg.querySelectorAll('.seg-btn').forEach((b) => {
+    const on = b.getAttribute('data-theme') === pref;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
+let sysThemeHooked = false;
+function watchSystemTheme() {
+  if (sysThemeHooked || !window.matchMedia) return;
+  let mq;
+  try { mq = window.matchMedia('(prefers-color-scheme: dark)'); } catch (_e) { return; }
+  const handler = () => { if (currentThemePref() === 'system') setTheme('system', false); };
+  try {
+    if (mq.addEventListener) mq.addEventListener('change', handler);
+    else if (mq.addListener) mq.addListener(handler);
+    sysThemeHooked = true;
+  } catch (_e) { /* 不支持就算了，跟随系统退化为固定值 */ }
+}
+
+function setTheme(pref, persist = true) {
+  state.theme = THEMES.indexOf(pref) >= 0 ? pref : 'system';
+  if (persist) lsSet(THEME_KEY, state.theme);
+  applyTheme();
+  renderTheme();
+  if (state.data) renderChart();
+}
+
+/** 读取 CSS 自定义属性的当前计算值（图表需要跟随主题换色） */
+function cssVar(name, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (v && v.trim()) || fallback;
+  } catch (_e) { return fallback; }
+}
+
 
 async function api(path, opts = {}) {
   const url = new URL(path, location.origin);
@@ -79,7 +162,7 @@ async function bootstrapToken() {
     const json = await res.json();
     if (json && json.token) {
       state.token = json.token;
-      localStorage.setItem(TOKEN_KEY, state.token);
+      lsSet(TOKEN_KEY, state.token);
     }
   } catch (_e) { /* 忽略，走手动输入 */ }
 }
@@ -92,7 +175,9 @@ async function load() {
     render();
   } catch (err) {
     if (err.status === 401) {
-      showAlert('需要在右上角填入「管理令牌」才能查看数据。令牌在网关启动日志里打印，也可查看 NAS 上数据目录下的 gateway-key.txt。');
+      showAlert('需要管理令牌才能查看数据。点右上角齿轮图标填入令牌；本机打开通常会自动填充，令牌也可在 NAS 数据目录的 gateway-key.txt 里找到。');
+      const panel = $('settingsPanel');
+      if (panel) panel.classList.remove('hidden');
     } else {
       showAlert(`加载失败：${err.message}`);
     }
@@ -102,6 +187,8 @@ async function load() {
 function render() {
   const d = state.data;
   if (!d) return;
+  applyTheme();
+  renderTheme();
   $('liveBadge').classList.remove('hidden');
   $('demoBadge').classList.toggle('hidden', !(d.stats.meta && d.stats.meta.demo));
   renderStats(d);
@@ -170,14 +257,20 @@ function renderChart() {
   const x = (i) => pad.l + (rows.length <= 1 ? plotW / 2 : (plotW * i) / (rows.length - 1));
   const y = (v) => pad.t + plotH - (max ? (plotH * v) / max : 0);
 
+  // 取当前主题色，深浅色切换后这里会重绘取到新值
+  const cGrid = cssVar('--border', '#38383c');
+  const cMute = cssVar('--text-3', '#6e6e73');
+  const cAccent = cssVar('--accent', '#0a84ff');
+  const cCard = cssVar('--card', '#1c1c1e');
+
   let g = '';
 
   // 网格 + Y 轴刻度
   for (let i = 0; i <= 4; i += 1) {
     const v = (max * i) / 4;
     const yy = y(v);
-    g += `<line x1="${pad.l}" y1="${yy.toFixed(1)}" x2="${W - pad.r}" y2="${yy.toFixed(1)}" stroke="#1e2127" stroke-width="1"/>`;
-    g += `<text x="${pad.l - 10}" y="${(yy + 4).toFixed(1)}" fill="#6d747e" font-size="10.5" text-anchor="end">${fmtCn(v)}</text>`;
+    g += `<line x1="${pad.l}" y1="${yy.toFixed(1)}" x2="${W - pad.r}" y2="${yy.toFixed(1)}" stroke="${cGrid}" stroke-width="1"/>`;
+    g += `<text x="${pad.l - 10}" y="${(yy + 4).toFixed(1)}" fill="${cMute}" font-size="10.5" text-anchor="end">${fmtCn(v)}</text>`;
   }
 
   // X 轴刻度
@@ -186,11 +279,11 @@ function renderChart() {
     const idx = Math.round((rows.length - 1) * (i / Math.max(1, tickCount - 1)));
     const r = rows[idx];
     if (!r) continue;
-    g += `<text x="${x(idx).toFixed(1)}" y="${H - 8}" fill="#6d747e" font-size="10.5" text-anchor="middle">${esc(r.day.slice(5))}</text>`;
+    g += `<text x="${x(idx).toFixed(1)}" y="${H - 8}" fill="${cMute}" font-size="10.5" text-anchor="middle">${esc(r.day.slice(5))}</text>`;
   }
 
   if (!rows.length || maxRaw === 0) {
-    g += `<text x="${W / 2}" y="${H / 2}" fill="#6d747e" font-size="13" text-anchor="middle">暂无流量数据 · 发一条 /v1/chat/completions 请求就会出现曲线</text>`;
+    g += `<text x="${W / 2}" y="${H / 2}" fill="${cMute}" font-size="13" text-anchor="middle">暂无流量数据 · 发一条 /v1/chat/completions 请求就会出现曲线</text>`;
     svg.innerHTML = `<defs></defs>${g}`;
     $('chartFrom').textContent = rows[0] ? rows[0].day : '--';
     $('chartTo').textContent = rows.length ? rows[rows.length - 1].day : '--';
@@ -204,8 +297,8 @@ function renderChart() {
   g += `
     <defs>
       <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stop-color="#f0b90b" stop-opacity="0.30"/>
-        <stop offset="100%" stop-color="#f0b90b" stop-opacity="0"/>
+        <stop offset="0%" stop-color="${cAccent}" stop-opacity="0.30"/>
+        <stop offset="100%" stop-color="${cAccent}" stop-opacity="0"/>
       </linearGradient>
       <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
         <feGaussianBlur stdDeviation="3.2" result="b"/>
@@ -213,12 +306,12 @@ function renderChart() {
       </filter>
     </defs>
     <path d="${areaPath}" fill="url(#areaGrad)"/>
-    <path d="${linePath}" fill="none" stroke="#f0b90b" stroke-width="2.1" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow)"/>
-    <circle cx="${x(lastIdx).toFixed(1)}" cy="${y(metricValue(rows[lastIdx])).toFixed(1)}" r="4.2" fill="#f0b90b"/>
-    <circle cx="${x(lastIdx).toFixed(1)}" cy="${y(metricValue(rows[lastIdx])).toFixed(1)}" r="8" fill="#f0b90b" opacity="0.18"/>
+    <path d="${linePath}" fill="none" stroke="${cAccent}" stroke-width="2.1" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow)"/>
+    <circle cx="${x(lastIdx).toFixed(1)}" cy="${y(metricValue(rows[lastIdx])).toFixed(1)}" r="4.2" fill="${cAccent}"/>
+    <circle cx="${x(lastIdx).toFixed(1)}" cy="${y(metricValue(rows[lastIdx])).toFixed(1)}" r="8" fill="${cAccent}" opacity="0.18"/>
   `;
 
-  g += `<g id="hoverLayer" style="display:none"><line id="hoverLine" y1="${pad.t}" y2="${pad.t + plotH}" stroke="#3a4048" stroke-width="1" stroke-dasharray="3 3"/><circle id="hoverDot" r="4" fill="#fff" stroke="#f0b90b" stroke-width="2"/></g>`;
+  g += `<g id="hoverLayer" style="display:none"><line id="hoverLine" y1="${pad.t}" y2="${pad.t + plotH}" stroke="${cGrid}" stroke-width="1" stroke-dasharray="3 3"/><circle id="hoverDot" r="4" fill="${cCard}" stroke="${cAccent}" stroke-width="2"/></g>`;
   g += `<rect id="hoverRect" x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" fill="transparent" style="cursor:crosshair"/>`;
 
   svg.innerHTML = g;
@@ -247,9 +340,9 @@ function renderChart() {
     hDot.setAttribute('cx', cx);
     hDot.setAttribute('cy', cy);
     tip.classList.remove('hidden');
-    tip.innerHTML = `<div style="color:#9aa1ab;font-size:11px">${esc(r.day)}</div>
-      <div><b>${fmtCn(metricValue(r))}</b> ${METRIC_LABEL[state.metric]}</div>
-      <div style="color:#8b9099;font-size:11px">调用 ${fmtInt(r.calls)} · 输入 ${fmtCn(r.input)} · 输出 ${fmtCn(r.output)}</div>`;
+    tip.innerHTML = `<div class="tip-day">${esc(r.day)}</div>
+      <div class="tip-val"><b>${fmtCn(metricValue(r))}</b> ${METRIC_LABEL[state.metric]}</div>
+      <div class="tip-meta">调用 ${fmtInt(r.calls)} · 输入 ${fmtCn(r.input)} · 输出 ${fmtCn(r.output)}</div>`;
     const tipW = tip.offsetWidth || 160;
     let left = (cx * scale) - tipW / 2;
     left = Math.max(4, Math.min(box.width - tipW - 4, left));
@@ -402,7 +495,7 @@ function renderProviders(d) {
         <div class="prov-right">
           <b>${fmtCn(usage.input + usage.output)}</b> Tokens<br>
           ${fmtInt(usage.calls)} 次调用<br>
-          ${p.homepage ? `<a href="${esc(p.homepage)}" target="_blank" rel="noreferrer" style="color:#4a9eff;text-decoration:none;font-size:11px">申请密钥 ↗</a>` : ''}
+          ${p.homepage ? `<a class="prov-link" href="${esc(p.homepage)}" target="_blank" rel="noreferrer">申请密钥 ↗</a>` : ''}
         </div>
         <div style="text-align:right;margin-top:6px">
           <button class="btn btn-mini" data-toggle-provider="${esc(p.id)}" data-enabled="${p.enabled ? '1' : '0'}" type="button">${p.enabled ? '停用' : '启用'}</button>
@@ -517,12 +610,12 @@ function renderUpdate(d) {
   $('updateCurrent').textContent = cur;
   $('updateLatest').textContent = upd.latest || cur;
   $('updateBadge').classList.toggle('hidden', !upd.hasUpdate);
-  if (upd.disabled) {
-    $('updateSummary').textContent = '未配置更新源';
-  } else if (upd.hasUpdate) {
-    $('updateSummary').textContent = `发现新版本 ${upd.latest}（来源：${upd.sourceLabel || '更新源'}）`;
+  if (upd.hasUpdate) {
+    $('updateSummary').textContent = `发现新版本 ${upd.latest}`;
+  } else if (upd.checkedAt) {
+    $('updateSummary').textContent = `已是最新（${upd.latest || cur}）`;
   } else {
-    $('updateSummary').textContent = upd.latest ? `已是最新（${upd.latest}）` : '尚未检查更新';
+    $('updateSummary').textContent = '点击「检查更新」查看最新版本';
   }
   $('updateApplyBtn').disabled = !upd.hasUpdate;
 }
@@ -534,22 +627,26 @@ function showUpdateMsg(msg, isError) {
 }
 
 async function loadUpdateConfig() {
+  // 更新源固定指向官方仓库，前端只展示仓库名，不再提供配置入口
   try {
     const cfg = await api('/admin/api/update/config');
     state.updateCfg = cfg;
-    $('cfgRepo').value = cfg.githubRepo || '';
-    $('cfgUrl').value = cfg.updateUrl || '';
-    $('cfgAltUrl').value = cfg.updateAltUrl || '';
-    $('cfgAuto').checked = cfg.autoCheckUpdate !== false;
-    // 凭据不明文回填，只显示是否已配置
-    $('cfgGhToken').placeholder = cfg.hasGithubToken ? '（已配置，留空表示不变）' : 'GitHub 令牌（可选：私有仓库 / 提高 API 限额时填写）';
-    $('cfgToken').placeholder = cfg.hasToken ? '（已配置，留空表示不变）' : 'Bearer 令牌（自建更新源服务用，可选）';
-    $('cfgUser').placeholder = cfg.hasBasic ? '（已配置，留空表示不变）' : '用户名（Basic 鉴权，可选）';
+    const label = (cfg.sources && cfg.sources[0] && cfg.sources[0].label) || '';
+    const src = $('updateSource');
+    if (src) src.textContent = label.replace(/^GitHub（|）$/g, '') || '373065025/free-model-gateway';
+  } catch (_e) { /* 忽略 */ }
+
+  // 可回滚的历史版本
+  try {
     const backups = await api('/admin/api/update/backups');
     const sel = $('updateRollbackSel');
-    sel.innerHTML = (backups.backups || []).map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
-    sel.classList.toggle('hidden', !(backups.backups && backups.backups.length));
-    $('updateRollbackBtn').disabled = !(backups.backups && backups.backups.length);
+    if (sel) {
+      const list = backups.backups || [];
+      sel.innerHTML = list.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+      sel.classList.toggle('hidden', !list.length);
+      const rb = $('updateRollbackBtn');
+      if (rb) rb.disabled = !list.length;
+    }
   } catch (_e) { /* 忽略 */ }
 }
 
@@ -561,7 +658,7 @@ async function refreshUpdateState() {
     $('updateBadge').classList.toggle('hidden', !r.hasUpdate);
     $('updateApplyBtn').disabled = !r.hasUpdate;
     $('updateSummary').textContent = r.hasUpdate
-      ? `发现新版本 ${r.latest}` : r.disabled ? '未配置更新源' : '已是最新';
+      ? `发现新版本 ${r.latest}` : `已是最新（${r.latest || cur}）`;
   } catch (_e) { /* 忽略 */ }
 }
 
@@ -569,13 +666,11 @@ async function checkUpdate() {
   const btn = $('updateCheckBtn');
   btn.disabled = true;
   btn.textContent = '检查中…';
-  showUpdateMsg('正在向更新源查询最新版本…', false);
+  showUpdateMsg('正在向 GitHub 查询最新版本…', false);
   try {
     const r = await api('/admin/api/update/check', { method: 'POST' });
-    if (r.disabled) {
-      showUpdateMsg('尚未配置更新源。展开下方「更新源设置」填入 GitHub 仓库（owner/repo）后重试。', true);
-    } else if (r.hasUpdate) {
-      showUpdateMsg(`发现新版本 ${r.latest}（${r.sourceLabel || '更新源'}）。可点击「应用更新」。`, false);
+    if (r.hasUpdate) {
+      showUpdateMsg(`发现新版本 ${r.latest}。点「应用更新」即可升级。`, false);
       await refreshUpdateState();
     } else if (r.error) {
       showUpdateMsg(`检查失败：${r.error}`, true);
@@ -645,35 +740,6 @@ async function rollbackUpdate() {
   }
 }
 
-async function saveUpdateCfg() {
-  const btn = $('cfgSaveBtn');
-  btn.disabled = true;
-  const body = {
-    githubRepo: $('cfgRepo').value.trim(),
-    updateUrl: $('cfgUrl').value.trim(),
-    updateAltUrl: $('cfgAltUrl').value.trim(),
-    autoCheckUpdate: $('cfgAuto').checked,
-  };
-  const ghToken = $('cfgGhToken').value.trim();
-  const token = $('cfgToken').value.trim();
-  const user = $('cfgUser').value.trim();
-  const pass = $('cfgPass').value.trim();
-  if (ghToken) body.githubToken = ghToken;
-  if (token) body.updateToken = token;
-  if (user) body.updateUser = user;
-  if (pass) body.updatePassword = pass;
-  try {
-    await api('/admin/api/update/config', { method: 'PUT', body: JSON.stringify(body) });
-    showUpdateMsg('更新源设置已保存。', false);
-    await loadUpdateConfig();
-    await checkUpdate();
-  } catch (err) {
-    showUpdateMsg(`保存失败：${err.message}`, true);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
 /* ----------------------------------------------------------------- 日志 */
 function renderLogs(d) {
   const logs = d.recentLogs || [];
@@ -706,12 +772,44 @@ function renderFooter(d) {
 function bindEvents() {
   $('refreshBtn').addEventListener('click', load);
 
-  $('tokenInput').value = state.token;
-  $('tokenInput').addEventListener('change', () => {
-    state.token = $('tokenInput').value.trim();
-    localStorage.setItem(TOKEN_KEY, state.token);
-    load();
-  });
+  // 主题切换：自动 / 浅色 / 深色
+  const seg = $('themeSeg');
+  if (seg) {
+    seg.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.seg-btn');
+      if (!btn) return;
+      setTheme(btn.getAttribute('data-theme'));
+    });
+  }
+
+  // 设置浮层（管理令牌）
+  const settingsBtn = $('settingsBtn');
+  const settingsPanel = $('settingsPanel');
+  const toggleSettings = (force) => {
+    if (!settingsPanel || !settingsBtn) return;
+    const show = typeof force === 'boolean' ? force : settingsPanel.classList.contains('hidden');
+    settingsPanel.classList.toggle('hidden', !show);
+    settingsBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
+  };
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleSettings();
+    });
+  }
+  if (settingsPanel) settingsPanel.addEventListener('click', (ev) => ev.stopPropagation());
+  document.addEventListener('click', () => toggleSettings(false));
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') toggleSettings(false); });
+
+  const tokenInput = $('tokenInput');
+  if (tokenInput) {
+    tokenInput.value = state.token;
+    tokenInput.addEventListener('change', () => {
+      state.token = tokenInput.value.trim();
+      lsSet(TOKEN_KEY, state.token);
+      load();
+    });
+  }
 
   $('chartSeg').addEventListener('click', (ev) => {
     const btn = ev.target.closest('.seg-btn');
@@ -832,7 +930,6 @@ function bindEvents() {
   $('updateCheckBtn').addEventListener('click', checkUpdate);
   $('updateApplyBtn').addEventListener('click', applyUpdate);
   $('updateRollbackBtn').addEventListener('click', rollbackUpdate);
-  $('cfgSaveBtn').addEventListener('click', saveUpdateCfg);
 }
 
 function startPolling() {
@@ -867,6 +964,9 @@ async function fillModelSelect() {
 
 (async function init() {
   bindEvents();
+  applyTheme();
+  renderTheme();
+  watchSystemTheme();
   await bootstrapToken();
   await load();
   await fillModelSelect();
