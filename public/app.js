@@ -780,6 +780,8 @@ function renderFooter(d) {
 
 /** 已经渲染进弹窗的同意书版本；用于避免重复拉取把用户的勾选状态冲掉 */
 let eulaShownVersion = '';
+/** 同意书请求序号：同意之后，早先发出的请求回来时不能再把弹窗重新打开 */
+let eulaReqSeq = 0;
 
 function eulaFoot(which) {
   ['eulaFoot', 'eulaDeclinedFoot', 'eulaReadFoot'].forEach((id) => {
@@ -846,13 +848,18 @@ function renderEula(r) {
 
 /** 取回同意书状态并渲染；forceReadonly 用于页脚「用户协议」只读回看 */
 async function loadEula(forceReadonly) {
+  const seq = ++eulaReqSeq;
   try {
     const r = await api('/admin/api/eula');
+    // 期间用户可能已经点了「同意」，或又发起了一次加载 —— 丢弃过期结果，
+    // 否则一个慢请求回来会把刚关掉的弹窗重新打开。
+    if (seq !== eulaReqSeq) return;
     state.eula = r;
     if (r.accepted && !forceReadonly) { hideEulaModal(); return; }
     openEulaMask();
     renderEula(r);
   } catch (err) {
+    if (seq !== eulaReqSeq) return;
     openEulaMask();
     const body = $('eulaBody');
     if (body) body.innerHTML = `<p class="eula-loading">加载条款失败：${esc(err.message)}</p>`;
@@ -896,6 +903,8 @@ async function acceptEula() {
   btn.textContent = '正在保存…';
   try {
     await api('/admin/api/eula/accept', { method: 'POST', body: '{}' });
+    // 让所有还在飞的同意书请求作废，避免它们回来又把弹窗打开
+    eulaReqSeq += 1;
     hideEulaModal();
     showAlert('');
     // 同意前这些接口都被门禁挡着，所以同意后要把首屏数据完整补一遍

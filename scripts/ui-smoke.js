@@ -43,6 +43,42 @@ async function waitFor(fn, timeoutMs = 12000, step = 250) {
   return false;
 }
 
+/**
+ * 趋势图、排行榜、峰值日在「没有任何流量」时会（正确地）渲染成空状态，
+ * 而 CI / 全新安装的机器恰好就是这种情况，于是那些断言会误报。
+ * 这里先用本机回环拿管理令牌；只在统计确实为空时，灌少量真实的内置模拟流量，
+ * 让「有数据」的富渲染路径也被覆盖到。已有真实数据时绝不打扰。
+ */
+async function ensureSampleData(doc) {
+  let key = '';
+  try {
+    const res = await fetch(`${BASE}/admin/api/bootstrap`);
+    if (res.ok) key = ((await res.json()) || {}).token || '';
+  } catch (_e) { /* 远程访问不允许自动下发令牌，那就跳过采样 */ }
+  if (!key) return false;
+
+  let empty = false;
+  try {
+    const ov = await (await fetch(`${BASE}/admin/api/overview?token=${encodeURIComponent(key)}`)).json();
+    empty = !ov || !ov.stats || !ov.stats.totals || ov.stats.totals.calls === 0;
+  } catch (_e) { return false; }
+  if (!empty) return false;
+
+  for (let i = 0; i < 6; i += 1) {
+    try {
+      await fetch(`${BASE}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: 'mock', messages: [{ role: 'user', content: `ui-smoke 采样 ${i + 1}` }] }),
+      });
+    } catch (_e) { /* 单条失败不影响整体 */ }
+  }
+  const btn = doc.getElementById('refreshBtn');
+  if (btn) btn.click();
+  await sleep(1500);
+  return true;
+}
+
 async function main() {
   console.log('\n=== Dashboard 渲染冒烟测试 ===\n');
   console.log(`目标：${BASE}\n`);
@@ -115,8 +151,9 @@ async function main() {
     check('未勾选时「同意」按钮不可点', acceptBtn.disabled === true);
     check('未同意时关闭按钮隐藏（弹窗不可跳过）',
       doc.getElementById('eulaCloseBtn').classList.contains('hidden'));
-    check('未同意时大屏数据为空（门禁生效）', q('#leaderboard .lb-row').length === 0,
-      `排行榜 ${q('#leaderboard .lb-row').length} 行`);
+    check('未同意时大屏数据为空（门禁生效）',
+      txt('statCalls') === '--' && q('#leaderboard .lb-row').length === 0,
+      `累计调用占位=${JSON.stringify(txt('statCalls'))}`);
 
     agree.checked = true;
     agree.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -125,14 +162,22 @@ async function main() {
 
     if (armed) {
       acceptBtn.click();
-      const unlocked = await waitFor(() => q('#leaderboard .lb-row').length > 0, 15000);
-      check('点击同意后门禁解除并加载出大屏数据', unlocked,
-        `排行榜 ${q('#leaderboard .lb-row').length} 行`);
+      // 零流量时排行榜本来就是空的，所以用「指标卡不再是占位符」作为门禁解除的判据
+      const unlocked = await waitFor(
+        () => txt('statCalls') !== '--' && txt('statCalls').length > 0, 15000);
+      check('点击同意后门禁解除并加载出大屏数据', unlocked, `累计调用 ${txt('statCalls')}`);
       check('同意后同意书弹窗自动关闭', !eulaVisible());
     }
   } else {
     check('已处于已同意状态（跳过首次弹窗用例）', true, '同意记录已存在');
     check('同意书弹窗默认隐藏', !eulaVisible());
+  }
+
+  // 保证「有数据才渲染」的那些断言（趋势线 / 排行榜 / 峰值日）在全新环境里也成立
+  if (await ensureSampleData(doc)) {
+    console.log('  （本机统计为空，已灌入 6 条内置模拟流量用于渲染校验）');
+    const ok = await waitFor(() => q('#leaderboard .lb-row').length > 0, 8000);
+    if (!ok) console.log('  （采样数据未及时反映到页面）');
   }
 
   check('页面标题正确', doc.title.includes('免费模型聚合网关'), doc.title);
