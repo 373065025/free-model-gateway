@@ -422,6 +422,14 @@ function createApp(options = {}) {
       return;
     }
 
+    // 同意书正文是公开的法律文本（仓库根目录另有一份 DISCLAIMER.md）。
+    // 这里刻意不校验管理令牌：令牌失效时若连条款都读不到，用户会卡在一个
+    // 看不懂的报错上——既不知道要同意什么，也没法自己修，等于装完打不开。
+    if (pathname === '/admin/api/eula' && req.method === 'GET') {
+      sendJson(res, 200, Object.assign({}, eula.getState(), { text: eula.getFullText() }));
+      return;
+    }
+
     if (!isAdmin(req, url)) {
       sendJson(res, 401, { error: { message: '管理令牌无效，请使用 ?token=<管理令牌> 或 x-admin-token 请求头', type: 'auth_error' } });
       return;
@@ -666,10 +674,7 @@ function createApp(options = {}) {
     }
 
     // ---- 用户许可与免责同意书 ----
-    if (pathname === '/admin/api/eula' && req.method === 'GET') {
-      sendJson(res, 200, Object.assign({}, eula.getState(), { text: eula.getFullText() }));
-      return;
-    }
+    // 注意：GET /admin/api/eula 在鉴权之前就已处理（见上），此处只剩「同意」这个写操作。
     if (pathname === '/admin/api/eula/accept' && req.method === 'POST') {
       const r = eula.accept({
         from: String(req.socket.remoteAddress || ''),

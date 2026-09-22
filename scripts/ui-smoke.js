@@ -14,6 +14,14 @@ const path = require('path');
 
 const BASE = process.env.UI_SMOKE_BASE || 'http://127.0.0.1:8787';
 
+/* 只有本机回环访问才会被服务端下发管理令牌；远程访问下 bootstrap 会 403，
+   此时不该往 localStorage 里塞假令牌（会直接把所有接口打成 401）。 */
+const IS_LOOPBACK = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/.test(BASE);
+
+/* 模拟「重装过 / 换过数据目录」的浏览器：localStorage 里还留着一把早已失效的令牌。
+   网关密钥是重新生成的，前端必须自己去服务端换一把，而不是拿旧令牌一路 401。 */
+const STALE_TOKEN = 'gw-stale-token-from-a-previous-install';
+
 let JSDOM = null;
 let VirtualConsole = null;
 try {
@@ -105,6 +113,10 @@ async function main() {
     pretendToBeVisual: true,
     virtualConsole: vc,
     beforeParse(window) {
+      // 必须赶在 public/app.js 执行之前把失效令牌写进去，才能复现真实用户的处境
+      if (IS_LOOPBACK) {
+        try { window.localStorage.setItem('fmg.adminToken', STALE_TOKEN); } catch (_e) { /* 忽略 */ }
+      }
       window.fetch = (input, init) => {
         const url = typeof input === 'string' ? input : (input && input.url) || String(input);
         return fetch(new URL(url, `${BASE}/`).toString(), init);
@@ -134,6 +146,15 @@ async function main() {
   const eulaVisible = () => !!eulaModal && !eulaModal.classList.contains('hidden');
   const ready = await waitFor(() => eulaVisible() || q('#leaderboard .lb-row').length > 0, 15000);
   if (!ready) await sleep(2000);
+
+  // ---- 回归：陈旧令牌必须被服务端的新令牌自动换掉 ----
+  // 这是「重装后打开大屏，同意书只显示『管理令牌无效』」那个线上问题的看门人。
+  if (IS_LOOPBACK) {
+    const stored = window.localStorage.getItem('fmg.adminToken');
+    check('残留的陈旧管理令牌已被服务端新令牌自动覆盖',
+      !!stored && stored !== STALE_TOKEN,
+      stored ? `localStorage 现为 ${String(stored).slice(0, 14)}…` : 'localStorage 为空');
+  }
 
   // ---- 首次使用：《用户许可与免责同意书》门禁 ----
   const eulaFirstRun = eulaVisible();

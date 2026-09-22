@@ -133,6 +133,15 @@ async function main() {
       !!(info.json && info.json.title && info.json.version && info.json.short && info.json.updatedAt),
       `${info.json && info.json.title} v${info.json && info.json.version}（${info.json && info.json.updatedAt}）`);
 
+    // 回归：重装 / 换数据目录后网关密钥会重新生成，浏览器 localStorage 里那把旧令牌
+    // 会让所有管理接口 401。同意书正文是公开法律文本，此时也必须能读到——
+    // 否则用户会卡在一个「管理令牌无效」的报错上，既不知道要同意什么也没法自己修。
+    const noToken = await request(base, { path: '/admin/api/eula' });
+    const noTokenSecs = noToken.json && noToken.json.text && noToken.json.text.sections;
+    check('同意书正文不依赖管理令牌（陈旧令牌也能读到条款）',
+      noToken.status === 200 && Array.isArray(noTokenSecs) && noTokenSecs.length >= 10,
+      `无令牌请求状态 ${noToken.status}，${Array.isArray(noTokenSecs) ? noTokenSecs.length : 0} 个章节`);
+
     const accept = await request(base, { path: adminPath('/admin/api/eula/accept'), method: 'POST', body: {} });
     check('提交同意后返回成功并带回接受时间',
       accept.status === 200 && accept.json.ok === true && accept.json.state.accepted === true && accept.json.state.acceptedAt > 0,

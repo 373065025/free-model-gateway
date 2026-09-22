@@ -131,8 +131,17 @@ function cssVar(name, fallback) {
 
 
 async function api(path, opts = {}) {
+  return requestApi(path, opts, true);
+}
+
+/**
+ * 真正发请求的地方。
+ * @param allowHeal 收到 401 时是否允许「换一把令牌再试一次」（只重试一次，避免死循环）
+ */
+async function requestApi(path, opts, allowHeal) {
   const url = new URL(path, location.origin);
-  if (state.token) url.searchParams.set('token', state.token);
+  const sentToken = state.token;
+  if (sentToken) url.searchParams.set('token', sentToken);
   const res = await fetch(url.toString(), Object.assign({
     headers: Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}),
   }, opts));
@@ -140,6 +149,15 @@ async function api(path, opts = {}) {
   let json = null;
   try { json = JSON.parse(text); } catch (_e) { json = { raw: text }; }
   if (!res.ok) {
+    // 缓存的令牌可能已经失效（重装、换了数据目录、清了配置后网关密钥会重新生成）。
+    // 本机回环下向服务端重新要一把再重试一次，别让用户被一个陈旧令牌卡死；
+    // 换不到（远程访问不下发令牌）就清掉，让页面提示去手工填。
+    if (allowHeal && res.status === 401 && sentToken) {
+      const fresh = await refreshToken();
+      if (fresh && fresh !== sentToken) return requestApi(path, opts, false);
+      state.token = '';
+      lsSet(TOKEN_KEY, '');
+    }
     const msg = (json && json.error && json.error.message) || `HTTP ${res.status}`;
     const err = new Error(msg);
     err.status = res.status;
@@ -159,17 +177,31 @@ function showAlert(msg) {
 }
 
 /* ------------------------------------------------------------------ 加载 */
-async function bootstrapToken() {
-  if (state.token) return;
+/**
+ * 向服务端要一把管理令牌：仅本机回环访问会下发（远程访问 403）。
+ * 失败时**不要**清空已有令牌 —— 那可能是用户手填的。
+ * 成功后以服务端返回的为准：重装 / 换数据目录后网关密钥会重新生成，
+ * localStorage 里缓存的旧令牌必须被覆盖，否则整个大屏都会 401。
+ */
+async function refreshToken() {
   try {
-    const res = await fetch('/admin/api/bootstrap');
-    if (!res.ok) return;
+    const res = await fetch('/admin/api/bootstrap', { cache: 'no-store' });
+    if (!res.ok) return '';
     const json = await res.json();
-    if (json && json.token) {
-      state.token = json.token;
-      lsSet(TOKEN_KEY, state.token);
-    }
-  } catch (_e) { /* 忽略，走手动输入 */ }
+    const token = (json && json.token) || '';
+    if (!token) return '';
+    state.token = token;
+    lsSet(TOKEN_KEY, token);
+    const input = $('tokenInput');
+    if (input) input.value = token;
+    return token;
+  } catch (_e) {
+    return '';
+  }
+}
+
+async function bootstrapToken() {
+  await refreshToken();
 }
 
 async function load() {
