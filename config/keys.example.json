@@ -1,0 +1,31 @@
+{
+  "_说明": "复制本文件为 config/keys.json 并填入各家平台的密钥。同一个渠道可以填多个 key（数组），网关会自动轮询+故障转移。也可以不写在这里，改用环境变量（见下方 _环境变量）。",
+  "_环境变量": [
+    "OPENROUTER_API_KEY",
+    "GEMINI_API_KEY",
+    "GROQ_API_KEY",
+    "CEREBRAS_API_KEY",
+    "NVIDIA_API_KEY",
+    "MISTRAL_API_KEY",
+    "GITHUB_MODELS_TOKEN",
+    "CLOUDFLARE_API_TOKEN",
+    "SAMBANOVA_API_KEY",
+    "SILICONFLOW_API_KEY",
+    "MODELSCOPE_API_KEY",
+    "ZHIPU_API_KEY"
+  ],
+  "_key 写法": "环境变量支持逗号分隔多个 key，例如 GROQ_API_KEY=gsk_aaa,gsk_bbb",
+
+  "openrouter": [],
+  "google": [],
+  "groq": [],
+  "cerebras": [],
+  "nvidia": [],
+  "mistral": [],
+  "github": [],
+  "cloudflare": [],
+  "sambanova": [],
+  "siliconflow": [],
+  "modelscope": [],
+  "zhipu": []
+}

@@ -1,0 +1,13 @@
+{
+  "network": {
+    "host": true,
+    "ports": [
+      {
+        "container": 8790,
+        "host": "${APP_PORT}",
+        "protocol": "tcp",
+        "desc": "免费模型聚合网关 HTTP 服务"
+      }
+    ]
+  }
+}

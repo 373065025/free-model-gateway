@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  selfcheck:
+    name: 端到端自检
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 运行自检（31 项：路由 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量）
+        run: node scripts/selfcheck.js

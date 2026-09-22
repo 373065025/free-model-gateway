@@ -1,0 +1,61 @@
+name: Release
+
+# 推送 v* 标签（如 v1.2.0）即自动打包并发布 Release。
+# 网关上「自动更新」填入本仓库 owner/repo，即可从 Release 一键升级。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 打包并发布
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 端到端自检
+        run: node scripts/selfcheck.js
+
+      - name: 打包飞牛 fnOS 应用（.fpk）
+        run: python tools/build_fpk.py
+
+      - name: 生成更新包与校验和
+        id: pkg
+        run: |
+          set -e
+          VERSION=$(grep -E '^version' fnos/manifest | head -1 | cut -d= -f2 | tr -d ' ')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          mkdir -p dist
+          # 热更新单元：内层 app.tgz（含 server/ ui/ config/ manifest）
+          cp build/app.tgz "dist/free-model-gateway-${VERSION}.tgz"
+          # 完整 fpk（用于应用中心手动安装 / 升级）
+          cp "free-model-gateway${VERSION}.fpk" "dist/" 2>/dev/null || true
+          (cd dist && sha256sum "free-model-gateway-${VERSION}.tgz" > "free-model-gateway-${VERSION}.tgz.sha256")
+          echo "--- 发布产物 ---"
+          ls -la dist
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## 免费模型聚合网关 v${{ steps.pkg.outputs.version }}
+
+            在网关「自动更新」面板填入本仓库 `owner/repo`，即可一键检查并升级。
+
+            - 热更新包：`free-model-gateway-${{ steps.pkg.outputs.version }}.tgz`
+            - 飞牛安装包：`free-model-gateway${{ steps.pkg.outputs.version }}.fpk`
+            - 校验和：`free-model-gateway-${{ steps.pkg.outputs.version }}.tgz.sha256`

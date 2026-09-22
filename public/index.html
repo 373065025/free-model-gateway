@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>免费模型聚合网关 · 监控大屏</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">FM</div>
+      <div class="brand-text">
+        <h1>免费模型聚合网关</h1>
+        <p>把各家平台的免费额度汇总成一个 OpenAI 兼容入口</p>
+      </div>
+      <span id="demoBadge" class="badge badge-warn hidden">演示数据</span>
+      <span id="liveBadge" class="badge badge-live"><i></i>实时</span>
+    </div>
+    <div class="topbar-right">
+      <label class="token-field">
+        <span>管理令牌</span>
+        <input id="tokenInput" type="password" placeholder="粘贴 gateway key" autocomplete="off">
+      </label>
+      <button id="refreshBtn" class="btn btn-ghost" type="button">刷新</button>
+    </div>
+  </header>
+
+  <div id="alertBox" class="alert hidden"></div>
+
+  <!-- 核心指标 -->
+  <section class="stat-grid">
+    <article class="card stat-card">
+      <div class="stat-head"><span class="dot dot-gold"></span>网关累计调用</div>
+      <div class="stat-value" id="statCalls">--</div>
+      <div class="stat-sub" id="statCallsSub">成功 -- · 失败 --</div>
+    </article>
+    <article class="card stat-card">
+      <div class="stat-head"><span class="dot dot-blue"></span>输入侧消耗</div>
+      <div class="stat-value" id="statInput">--</div>
+      <div class="stat-sub" id="statInputSub">今日 -- tokens</div>
+    </article>
+    <article class="card stat-card">
+      <div class="stat-head"><span class="dot dot-green"></span>输出 Tokens</div>
+      <div class="stat-value" id="statOutput">--</div>
+      <div class="stat-sub" id="statOutputSub">成功率 -- · 平均延迟 --</div>
+    </article>
+    <article class="card stat-card">
+      <div class="stat-head"><span class="dot dot-purple"></span>连续服务</div>
+      <div class="stat-value" id="statStreak">--</div>
+      <div class="stat-sub" id="statStreakSub">日均 -- Tokens</div>
+    </article>
+  </section>
+
+  <!-- 趋势 -->
+  <section class="card chart-card">
+    <div class="card-head">
+      <div class="card-title"><span class="ico ico-gold"></span>每日消耗趋势</div>
+      <div class="card-tools">
+        <span class="muted">近 29 天</span>
+        <div class="seg" id="chartSeg">
+          <button class="seg-btn active" data-metric="total" type="button">合计</button>
+          <button class="seg-btn" data-metric="input" type="button">输入</button>
+          <button class="seg-btn" data-metric="output" type="button">输出</button>
+          <button class="seg-btn" data-metric="calls" type="button">调用</button>
+        </div>
+      </div>
+    </div>
+    <div id="chartWrap" class="chart-wrap">
+      <svg id="trendChart" viewBox="0 0 900 260" preserveAspectRatio="none" role="img" aria-label="每日消耗趋势"></svg>
+      <div id="chartTip" class="chart-tip hidden"></div>
+    </div>
+    <div class="chart-foot">
+      <span id="chartFrom" class="muted">--</span>
+      <span id="chartTo" class="muted">--</span>
+    </div>
+  </section>
+
+  <div class="two-col">
+    <!-- 排行 -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title"><span class="ico ico-trophy"></span>模型 Token 排行榜</div>
+        <span class="muted">消耗占比</span>
+      </div>
+      <ol id="leaderboard" class="leaderboard"></ol>
+      <div class="peak-row">
+        <span class="ico ico-flame"></span>
+        <span class="muted">峰值日</span>
+        <strong id="peakDay">--</strong>
+        <span class="muted">消耗</span>
+        <strong id="peakValue" class="c-green">--</strong>
+      </div>
+    </section>
+
+    <!-- 接入信息 -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title"><span class="ico ico-plug"></span>接入信息</div>
+        <span class="muted">把它填进任意 AI 客户端</span>
+      </div>
+      <div class="kv">
+        <label>API Base URL</label>
+        <div class="copy-row">
+          <code id="baseUrl">--</code>
+          <button class="btn btn-mini" data-copy="baseUrl" type="button">复制</button>
+        </div>
+      </div>
+      <div class="kv">
+        <label>API Key</label>
+        <div class="copy-row">
+          <code id="clientKey">--</code>
+          <button class="btn btn-mini" data-copy="clientKey" type="button">复制</button>
+        </div>
+      </div>
+      <div class="kv">
+        <label>默认模型名</label>
+        <div class="copy-row">
+          <code id="defaultModel">auto</code>
+          <button class="btn btn-mini" data-copy="defaultModel" type="button">复制</button>
+        </div>
+      </div>
+      <div class="tabs" id="snippetTabs">
+        <button class="tab active" data-tab="curl" type="button">cURL</button>
+        <button class="tab" data-tab="python" type="button">Python</button>
+        <button class="tab" data-tab="node" type="button">Node</button>
+        <button class="tab" data-tab="env" type="button">客户端配置</button>
+      </div>
+      <pre id="snippetBox" class="snippet"></pre>
+      <button class="btn btn-ghost btn-block" data-copy="snippetBox" type="button">复制这段代码</button>
+    </section>
+  </div>
+
+  <!-- 在线自测 -->
+  <section class="card">
+    <div class="card-head">
+      <div class="card-title"><span class="ico ico-bolt"></span>在线自测</div>
+      <span class="muted">直接走网关链路，验证路由与故障转移是否正常</span>
+    </div>
+    <div class="test-row">
+      <select id="testModel"></select>
+      <input id="testPrompt" type="text" value="用一句话介绍你自己，并说明你来自哪个渠道。" placeholder="输入测试提示词">
+      <button id="testBtn" class="btn btn-gold" type="button">发送测试</button>
+    </div>
+    <div id="testResult" class="test-result hidden"></div>
+  </section>
+
+  <div class="two-col">
+    <!-- 渠道状态 -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title"><span class="ico ico-shield"></span>渠道健康状态</div>
+        <div class="card-tools">
+          <span class="muted" id="providerSummary">--</span>
+          <button id="discoverBtn" class="btn btn-mini" type="button">重新发现免费模型</button>
+        </div>
+      </div>
+      <div id="providerList" class="provider-list"></div>
+    </section>
+
+    <!-- 模型清单 -->
+    <section class="card">
+      <div class="card-head">
+        <div class="card-title"><span class="ico ico-list"></span>可用模型清单</div>
+        <span class="muted" id="modelSummary">--</span>
+      </div>
+      <div class="filter-row">
+        <input id="modelFilter" type="text" placeholder="筛选模型名 / 渠道…">
+      </div>
+      <div id="modelList" class="model-list"></div>
+    </section>
+  </div>
+
+  <!-- 密钥管理 -->
+  <section class="card">
+    <div class="card-head">
+      <div class="card-title"><span class="ico ico-key"></span>密钥池</div>
+      <span class="muted">同一个渠道可挂多个密钥，网关自动轮询 + 熔断</span>
+    </div>
+    <div class="test-row">
+      <select id="keyProvider"></select>
+      <input id="keyInput" type="password" placeholder="粘贴该渠道的 API Key（多个用英文逗号分隔）">
+      <button id="keyAddBtn" class="btn btn-gold" type="button">添加密钥</button>
+    </div>
+    <div id="keyList" class="key-list"></div>
+  </section>
+
+  <!-- 自动更新 -->
+  <section class="card" id="updateSection">
+    <div class="card-head">
+      <div class="card-title"><span class="ico ico-update"></span>自动更新</div>
+      <span class="muted" id="updateSummary">--</span>
+    </div>
+    <div class="update-status">
+      <div class="update-ver">
+        <span class="muted">当前版本</span>
+        <b id="updateCurrent">--</b>
+        <span class="muted">·</span>
+        <span class="muted">最新</span>
+        <b id="updateLatest">--</b>
+        <span id="updateBadge" class="badge badge-live hidden">有更新</span>
+      </div>
+      <div class="update-actions">
+        <button id="updateCheckBtn" class="btn btn-ghost" type="button">检查更新</button>
+        <button id="updateApplyBtn" class="btn btn-gold" type="button" disabled>应用更新</button>
+        <button id="updateRollbackBtn" class="btn btn-mini" type="button" disabled>回滚</button>
+        <select id="updateRollbackSel" class="hidden"></select>
+      </div>
+    </div>
+    <div id="updateMsg" class="test-result hidden"></div>
+
+    <details class="update-config">
+      <summary>更新源设置（GitHub）</summary>
+      <div class="test-row">
+        <input id="cfgRepo" type="text" placeholder="GitHub 仓库，如 yourname/free-model-gateway（留空则关闭自动更新）">
+      </div>
+      <div class="test-row">
+        <input id="cfgGhToken" type="password" placeholder="GitHub 令牌（可选：私有仓库 / 提高 API 限额时填写）">
+      </div>
+      <div class="filter-row">
+        <label class="switch"><input id="cfgAuto" type="checkbox" checked><span></span>自动检查更新（每 6 小时）</label>
+        <button id="cfgSaveBtn" class="btn btn-gold btn-mini" type="button">保存设置</button>
+      </div>
+      <div class="muted" style="font-size:12px;line-height:1.6">
+        在 GitHub 仓库发布 Release 并附上 <code>free-model-gateway-&lt;版本&gt;.tgz</code>，网关即可在此一键升级。令牌只保存在网关本机配置目录，前端不会回发明文。
+      </div>
+
+      <details class="update-advanced">
+        <summary>高级：自定义 / 镜像更新源（GitHub 拉不动时备用）</summary>
+        <div class="test-row">
+          <input id="cfgUrl" type="text" placeholder="自定义 update.json 完整地址（自建 update-server / OpenList 等）">
+        </div>
+        <div class="test-row">
+          <input id="cfgAltUrl" type="text" placeholder="备用更新源地址（可选）">
+        </div>
+        <div class="test-row">
+          <input id="cfgToken" type="password" placeholder="Bearer 令牌（自建更新源服务用，可选）">
+        </div>
+        <div class="test-row">
+          <input id="cfgUser" type="text" placeholder="用户名（Basic 鉴权，可选）">
+          <input id="cfgPass" type="password" placeholder="密码">
+        </div>
+      </details>
+    </details>
+  </section>
+
+  <!-- 日志 -->
+  <section class="card">
+    <div class="card-head">
+      <div class="card-title"><span class="ico ico-log"></span>实时请求日志</div>
+      <div class="card-tools">
+        <label class="switch"><input id="autoRefresh" type="checkbox" checked><span></span>自动刷新</label>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="log-table">
+        <thead>
+          <tr><th>时间</th><th>模型</th><th>渠道</th><th>状态</th><th>输入</th><th>输出</th><th>耗时</th><th>尝试</th><th>说明</th></tr>
+        </thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>数据源 · 本机聚合网关</span>
+    <span>·</span>
+    <span id="footUpdated">每次打开自动刷新</span>
+    <span>·</span>
+    <span id="footStart">自 -- 起计</span>
+    <span>·</span>
+    <span id="footVersion"></span>
+  </footer>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

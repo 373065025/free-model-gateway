@@ -1,0 +1,14 @@
+node_modules/
+data/
+build/
+dist/
+.workbuddy/
+.update/
+config/keys.json
+config/models.discovered.json
+config/update-config.json
+*.fpk
+*.tgz
+*.log
+*.tmp
+.DS_Store

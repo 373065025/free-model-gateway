@@ -1,0 +1,18 @@
+#!/bin/bash
+# 卸载回调：只停进程，保留 ${TRIM_PKGVAR} 里的密钥与统计数据（重装后不用重新配）。
+
+PIDFILE="/tmp/free-model-gateway.pid"
+
+if [ -f "$PIDFILE" ]; then
+  PID=$(cat "$PIDFILE")
+  kill "$PID" 2>/dev/null
+  sleep 1
+  kill -9 "$PID" 2>/dev/null || true
+  rm -f "$PIDFILE"
+fi
+
+VARDIR="${TRIM_PKGVAR:-/var/pkgvar/free-model-gateway}"
+echo "[uninstall_callback] 已停止服务。"
+echo "[uninstall_callback] 你的密钥与统计数据仍保留在：${VARDIR}"
+echo "[uninstall_callback] 如需彻底清理，手动删除该目录即可。"
+exit 0

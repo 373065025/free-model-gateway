@@ -1,0 +1,14 @@
+appname          = free-model-gateway
+version          = 1.2.0
+display_name     = 免费模型聚合网关
+desc             = 把散落在各家平台的免费大模型额度（Gemini / Groq / OpenRouter / 智谱 / 硅基流动 / Cerebras / NVIDIA 等 15 个渠道）汇总成一个 OpenAI 兼容入口，内置多密钥轮询、限速熔断、故障转移、免费模型自动发现与暗色监控大屏，供 Cherry Studio / NextChat / LobeChat / Cursor 等任意 AI 客户端集中调用
+platform         = x86
+source           = thirdparty
+maintainer       = 成哥哥
+maintainer_url   = https://github.com/373065025
+distributor      = 成哥哥
+distributor_url  = https://github.com/373065025
+os_min_version   = 1.0.0
+desktop_uidir    = ui
+desktop_applaunchname = free-model-gateway.main
+service_port     = 8790

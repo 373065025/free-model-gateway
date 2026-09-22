@@ -1,0 +1,94 @@
+#!/bin/bash
+# 免费模型聚合网关 · 启停脚本
+# 端口 / 监听地址 / 数据目录 都通过环境变量注入，配置文件本身保持原样。
+
+PIDFILE="/tmp/free-model-gateway.pid"
+LOG="/tmp/free-model-gateway.log"
+
+# 把飞牛应用中心的 Node.js 加进 PATH（v20 / v22 / v24 都试一遍）
+for d in /vol1/@appcenter/nodejs_v20/bin /vol1/@appcenter/nodejs_v22/bin \
+         /vol1/@appcenter/nodejs_v24/bin /vol1/@appcenter/nodejs/bin; do
+  [ -d "$d" ] && export PATH="${d}:$PATH"
+done
+
+APP_ROOT="${TRIM_APPDEST:-/var/apps/free-model-gateway}"
+VARDIR="${TRIM_PKGVAR:-/var/pkgvar/free-model-gateway}"
+
+find_server() {
+  for d in \
+    "${APP_ROOT}/target/server" \
+    "${APP_ROOT}/server" \
+    "/vol1/@appcenter/free-model-gateway/server" \
+    "/vol1/@appcenter/free-model-gateway/target/server"; do
+    if [ -f "${d}/src/index.js" ]; then
+      echo "${d}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+case "${1:-}" in
+  start)
+    if [ -f "$PIDFILE" ]; then
+      PID=$(cat "$PIDFILE")
+      if kill -0 "$PID" 2>/dev/null; then
+        echo "Already running (PID: $PID)"
+        exit 0
+      fi
+      rm -f "$PIDFILE"
+    fi
+
+    SERVER_DIR="$(find_server)" || {
+      echo "ERROR: server not found under ${APP_ROOT}" >&2
+      exit 1
+    }
+
+    mkdir -p "${VARDIR}/config" "${VARDIR}/data" 2>/dev/null
+
+    export NODE_ENV=production
+    export GATEWAY_HOST="0.0.0.0"
+    export GATEWAY_PORT="${APP_PORT:-8790}"
+    export GATEWAY_CONFIG_DIR="${VARDIR}/config"
+    export GATEWAY_DATA_DIR="${VARDIR}/data"
+    if [ -f "${VARDIR}/admin-token" ]; then
+      export GATEWAY_ADMIN_TOKEN="$(cat "${VARDIR}/admin-token")"
+    fi
+
+    echo "Starting from ${SERVER_DIR} on port ${GATEWAY_PORT}"
+    cd "${SERVER_DIR}" || exit 1
+    nohup node src/index.js >> "${LOG}" 2>&1 &
+    echo $! > "$PIDFILE"
+    echo "Started (PID: $!)"
+    ;;
+
+  stop)
+    if [ -f "$PIDFILE" ]; then
+      PID=$(cat "$PIDFILE")
+      kill "$PID" 2>/dev/null
+      sleep 1
+      kill -9 "$PID" 2>/dev/null || true
+      rm -f "$PIDFILE"
+    fi
+    echo "Stopped."
+    ;;
+
+  status)
+    if [ -f "$PIDFILE" ]; then
+      PID=$(cat "$PIDFILE")
+      if kill -0 "$PID" 2>/dev/null; then
+        echo "Running (PID: $PID)"
+        exit 0
+      fi
+    fi
+    echo "Stopped"
+    exit 3
+    ;;
+
+  *)
+    echo "Usage: $0 {start|stop|status}" >&2
+    exit 2
+    ;;
+esac
+
+exit 0

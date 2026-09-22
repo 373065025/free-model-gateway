@@ -1,0 +1,13 @@
+# 统一 LF，避免 Windows 上编辑后 shell 脚本带 CRLF，传到飞牛 NAS 上无法执行
+* text=auto eol=lf
+
+# 显式声明 shell 脚本必须 LF
+*.sh text eol=lf
+fnos/cmd/* text eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.PNG binary
+*.fpk binary
+*.tgz binary
+*.gz binary

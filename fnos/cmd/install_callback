@@ -1,0 +1,100 @@
+#!/bin/bash
+# 安装回调：准备持久化目录、复制默认配置、生成管理令牌，并把「访问密钥」写成一个人能看懂的文件。
+
+APP_ROOT="${TRIM_APPDEST:-/var/apps/free-model-gateway}"
+VARDIR="${TRIM_PKGVAR:-/var/pkgvar/free-model-gateway}"
+APPDIR="${VARDIR}/config"
+DATADIR="${VARDIR}/data"
+
+echo "[install_callback] APP_ROOT=${APP_ROOT}"
+echo "[install_callback] VAR     =${VARDIR}"
+
+mkdir -p "${APPDIR}" "${DATADIR}" 2>/dev/null || true
+
+# 找出打包进去的 server 目录（配置模板在里面）
+SERVER_DIR=""
+for d in "${APP_ROOT}/target/server" "${APP_ROOT}/server" \
+         "/vol1/@appcenter/free-model-gateway/server" \
+         "/vol1/@appcenter/free-model-gateway/target/server"; do
+  if [ -f "${d}/src/index.js" ]; then SERVER_DIR="${d}"; break; fi
+done
+
+# 1) 默认渠道配置（首次安装时复制一份到持久目录，之后升级不会被覆盖）
+if [ ! -f "${APPDIR}/providers.json" ] && [ -n "${SERVER_DIR}" ]; then
+  cp "${SERVER_DIR}/config/providers.json" "${APPDIR}/providers.json" 2>/dev/null \
+    && echo "[install_callback] 已写入默认渠道配置"
+fi
+
+# 2) 密钥文件骨架（用户往这里填各家平台的免费 key）
+if [ ! -f "${APPDIR}/keys.json" ]; then
+  cat > "${APPDIR}/keys.json" <<'KEYS'
+{
+  "openrouter": [],
+  "google": [],
+  "groq": [],
+  "cerebras": [],
+  "nvidia": [],
+  "mistral": [],
+  "github": [],
+  "cloudflare": [],
+  "sambanova": [],
+  "siliconflow": [],
+  "modelscope": [],
+  "zhipu": []
+}
+KEYS
+  echo "[install_callback] 已创建 keys.json"
+fi
+
+# 3) 管理令牌：生成一次，长期不变
+if [ ! -f "${VARDIR}/admin-token" ]; then
+  TOKEN="gw-$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  echo "${TOKEN}" > "${VARDIR}/admin-token"
+  echo "[install_callback] 已生成管理令牌"
+fi
+TOKEN="$(cat "${VARDIR}/admin-token" 2>/dev/null)"
+
+# 4) 把关键信息写成人类可读文件，用户不用去翻日志
+HOSTIP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -z "${HOSTIP}" ] && HOSTIP="<NAS-IP>"
+
+cat > "${VARDIR}/访问密钥.txt" <<INFO
+==================================================
+ 免费模型聚合网关 · 接入信息
+==================================================
+
+【第一步】把密钥填进配置文件，网关才会真正去调用免费模型：
+  ${APPDIR}/keys.json
+
+  各家免费密钥申请地址（都不需要绑卡）：
+    Google AI Studio  https://aistudio.google.com/app/apikey
+    Groq              https://console.groq.com/keys
+    OpenRouter        https://openrouter.ai/keys
+    智谱 BigModel     https://open.bigmodel.cn/usercenter/apikeys
+    硅基流动          https://cloud.siliconflow.cn/account/ak
+    魔搭 ModelScope   https://modelscope.cn/my/myaccesstoken
+    Cerebras          https://cloud.cerebras.ai
+    NVIDIA NIM        https://build.nvidia.com
+    Mistral           https://console.mistral.ai/api-keys
+  填完保存后，在应用中心把本应用「停止」再「启动」即可生效。
+
+【第二步】把下面三项填进任意 AI 客户端（Cherry Studio / NextChat 等）：
+  API Base URL : http://${HOSTIP}:${APP_PORT:-8790}/v1
+  API Key      : ${TOKEN}
+  模型名称     : auto        （自动挑一个可用的免费模型）
+
+【第三步】打开监控大屏，查看调用量、消耗趋势与渠道健康状态：
+  http://${HOSTIP}:${APP_PORT:-8790}/
+  管理令牌     : ${TOKEN}
+
+【其他】统计数据   : ${DATADIR}/usage.json
+        重新发现免费模型：在大屏上点「重新发现免费模型」
+        想换管理令牌，改 ${VARDIR}/admin-token 后重启应用
+
+==================================================
+INFO
+
+chmod 600 "${VARDIR}/admin-token" 2>/dev/null || true
+
+echo "[install_callback] Done. 接入信息见 ${VARDIR}/访问密钥.txt"
+exit 0

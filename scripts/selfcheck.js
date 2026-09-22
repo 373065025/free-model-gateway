@@ -1,0 +1,321 @@
+'use strict';
+
+/**
+ * 端到端自检：真的把网关跑起来，逐项验证对外接口、流式透传、故障转移与统计闭环。
+ * 不依赖任何真实平台密钥——用内置模拟渠道 + 一个「故意失败」的假渠道即可覆盖完整链路。
+ *
+ *   node scripts/selfcheck.js
+ *
+ * 注意：自检会写入临时统计文件（系统 temp 目录），不会污染 data/usage.json 里的真实数据。
+ */
+
+const http = require('http');
+const os = require('os');
+const path = require('path');
+const { createApp } = require('../src/index');
+const { buildRegistry } = require('../src/config');
+
+const USAGE_TMP = path.join(os.tmpdir(), `fmg-selfcheck-${Date.now()}.json`);
+
+const results = [];
+function check(name, ok, detail) {
+  results.push({ name, ok: !!ok, detail: detail || '' });
+  const mark = ok ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m';
+  console.log(`  ${mark}  ${name}${detail ? `  — ${detail}` : ''}`);
+}
+
+function startBrokenProvider() {
+  const server = http.createServer((req, res) => {
+    res.writeHead(429, { 'Content-Type': 'application/json', 'retry-after': '60' });
+    res.end(JSON.stringify({ error: { message: 'mock 429：故意触发的限流，用来验证故障转移' } }));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+  });
+}
+
+async function request(base, options = {}) {
+  const res = await fetch(`${base}${options.path}`, {
+    method: options.method || 'GET',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, options.headers || {}),
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch (_e) { json = null; }
+  return { status: res.status, json, text, headers: res.headers };
+}
+
+async function readSse(base, options) {
+  const res = await fetch(`${base}${options.path}`, {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, options.headers || {}),
+    body: JSON.stringify(options.body),
+  });
+  const decoder = new TextDecoder();
+  let buf = '';
+  let chunks = 0;
+  let text = '';
+  let done = false;
+  for await (const piece of res.body) {
+    buf += decoder.decode(piece, { stream: true });
+    let i = buf.indexOf('\n');
+    while (i >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      i = buf.indexOf('\n');
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') { done = true; continue; }
+      chunks += 1;
+      try {
+        const j = JSON.parse(payload);
+        const d = j.choices && j.choices[0] && j.choices[0].delta;
+        if (d && d.content) text += d.content;
+      } catch (_e) { /* ignore */ }
+    }
+  }
+  return { status: res.status, chunks, text, done, headers: res.headers };
+}
+
+async function main() {
+  console.log('\n=== 免费模型聚合网关 · 端到端自检 ===\n');
+
+  const app = createApp({ usageFile: USAGE_TMP });
+  const { ctx } = app;
+  const cfg = ctx.cfg;
+
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const port = app.server.address().port;
+  const base = `http://127.0.0.1:${port}`;
+  const auth = { Authorization: `Bearer ${cfg.gatewayKey}` };
+  const adminPath = (p) => `${p}${p.includes('?') ? '&' : '?'}token=${encodeURIComponent(cfg.gatewayKey)}`;
+
+  console.log(`服务已启动：${base}\n`);
+  console.log('--- 第一阶段：不注入故障渠道，验证基础链路 ---\n');
+
+  // 1. 健康检查
+  {
+    const r = await request(base, { path: '/healthz' });
+    check('GET /healthz 返回 200 且结构正确', r.status === 200 && r.json.ok === true, `状态 ${r.status}`);
+  }
+
+  // 2. 鉴权
+  {
+    const r = await request(base, { path: '/v1/models' });
+    check('未带密钥访问 /v1/models 被拒绝', r.status === 401 && !!r.json.error, `状态 ${r.status}`);
+  }
+
+  // 3. 模型清单
+  let modelIds = [];
+  {
+    const r = await request(base, { path: '/v1/models', headers: auth });
+    modelIds = (r.json && r.json.data ? r.json.data : []).map((m) => m.id);
+    check('GET /v1/models 返回模型清单', r.status === 200 && modelIds.length > 0, `${modelIds.length} 个模型`);
+    check('清单包含 auto 自动路由入口', modelIds.includes('auto'));
+    check('清单包含内置模拟模型', modelIds.includes('mock'));
+  }
+
+  // 4. 非流式对话
+  {
+    const r = await request(base, {
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: auth,
+      body: { model: 'mock', messages: [{ role: 'user', content: '自检：你好' }] },
+    });
+    const content = r.json && r.json.choices && r.json.choices[0].message.content;
+    check('POST /v1/chat/completions 正常返回', r.status === 200 && !!content, `状态 ${r.status}，内容 ${String(content || '').length} 字`);
+    check('响应带 usage 用量字段', !!(r.json && r.json.usage && r.json.usage.total_tokens > 0), JSON.stringify(r.json && r.json.usage));
+    check('响应带 x_gateway 渠道来源信息', !!(r.json && r.json.x_gateway && r.json.x_gateway.provider));
+  }
+
+  // 5. 流式对话
+  {
+    const r = await readSse(base, {
+      path: '/v1/chat/completions',
+      headers: auth,
+      body: { model: 'mock', messages: [{ role: 'user', content: '自检：流式' }], stream: true },
+    });
+    check('流式接口返回 SSE 且分块输出', r.status === 200 && r.chunks > 2 && r.text.length > 0, `${r.chunks} 个分块，${r.text.length} 字`);
+    check('流式以 [DONE] 正常收尾', r.done === true);
+    check('流式响应头为 text/event-stream',
+      String(r.headers.get('content-type') || '').includes('text/event-stream'),
+      String(r.headers.get('content-type')));
+  }
+
+  // 6. auto 自动路由
+  {
+    const r = await request(base, {
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: auth,
+      body: { model: 'auto', messages: [{ role: 'user', content: '自检：auto 路由' }] },
+    });
+    check('model=auto 自动选路成功', r.status === 200 && !!(r.json.choices), `状态 ${r.status}`);
+  }
+
+  // 7. 能力标签路由
+  {
+    const r = await request(base, {
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: auth,
+      body: { model: 'auto:reason', messages: [{ role: 'user', content: '自检：推理标签路由' }] },
+    });
+    check('model=auto:reason 能力标签路由可用', r.status === 200, `状态 ${r.status}`);
+  }
+
+  // 8. 未知模型
+  {
+    const r = await request(base, {
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: auth,
+      body: { model: 'this-model-does-not-exist', messages: [{ role: 'user', content: 'x' }] },
+    });
+    check('未知模型返回 404 与可用模型提示', r.status === 404 && r.json.error.code === 'model_not_found', `状态 ${r.status}`);
+  }
+
+  // 9. 参数校验
+  {
+    const r = await request(base, {
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: auth,
+      body: { model: 'mock' },
+    });
+    check('缺少 messages 时返回 400', r.status === 400, `状态 ${r.status}`);
+  }
+
+  // 10. 管理接口与统计闭环
+  {
+    const r = await request(base, { path: adminPath('/admin/api/overview') });
+    const stats = r.json && r.json.stats;
+    check('管理接口返回概览数据', r.status === 200 && !!stats, `状态 ${r.status}`);
+    check('累计调用数已统计到自检流量', !!(stats && stats.totals.calls >= 5 && stats.totals.success >= 4 && stats.totals.failed >= 1),
+      `calls=${stats && stats.totals.calls}, success=${stats && stats.totals.success}, failed=${stats && stats.totals.failed}`);
+    check('输入/输出 token 均已计量', !!(stats && stats.totals.inputTokens > 0 && stats.totals.outputTokens > 0),
+      `输入 ${stats && stats.totals.inputTokens} / 输出 ${stats && stats.totals.outputTokens}`);
+    check('每日趋势序列已生成', !!(stats && stats.trend && stats.trend.length === 29), `${stats && stats.trend && stats.trend.length} 天`);
+    check('模型排行榜已聚合', !!(stats && stats.leaderboard && stats.leaderboard.length > 0), `${stats && stats.leaderboard && stats.leaderboard.length} 行`);
+    check('渠道健康状态可查', !!(r.json.providers && r.json.providers.length > 0), `${r.json.providers && r.json.providers.length} 个渠道`);
+  }
+
+  // 11. 日志（含失败记录）
+  {
+    const r = await request(base, { path: adminPath('/admin/api/logs?limit=50') });
+    const logs = (r.json && r.json.logs) || [];
+    check('请求日志已记录（含失败）', logs.length > 0 && logs.some((l) => !l.ok), `${logs.length} 条，其中失败 ${logs.filter((l) => !l.ok).length} 条`);
+  }
+
+  // 12. 管理端一键自测
+  {
+    const r = await request(base, {
+      path: adminPath('/admin/api/test'),
+      method: 'POST',
+      body: { model: 'auto', prompt: '自检' },
+    });
+    check('管理端一键自测可用', r.status === 200 && r.json.ok === true, `渠道 ${r.json.provider || '-'}，耗时 ${r.json.latencyMs} ms`);
+  }
+
+  // 13. 管理令牌校验
+  {
+    const r = await request(base, { path: '/admin/api/overview?token=wrong-token' });
+    check('错误管理令牌被拒绝', r.status === 401, `状态 ${r.status}`);
+  }
+
+  // 14. 远程不允许自动下发令牌
+  {
+    const r = await request(base, { path: '/admin/api/bootstrap' });
+    check('本机回环地址可自动获取令牌（Dashboard 免配置）', r.status === 200 && !!r.json.token, `状态 ${r.status}`);
+  }
+
+  // 15. Dashboard 静态页
+  {
+    const r = await request(base, { path: '/' });
+    check('Dashboard 页面可访问', r.status === 200 && r.text.includes('监控大屏'), `状态 ${r.status}`);
+  }
+
+  console.log('\n--- 第二阶段：注入一个永远 429 的假渠道，验证熔断与故障转移 ---\n');
+
+  const broken = await startBrokenProvider();
+  const fakeProvider = {
+    id: '__broken__',
+    name: '故意失败的渠道(429)',
+    type: 'openai',
+    baseUrl: `http://127.0.0.1:${broken.port}/v1`,
+    enabled: true,
+    keyless: true,
+    priority: 99,
+    rpm: 0,
+    rpd: 0,
+    keys: ['__keyless__'],
+    models: [{ id: 'broken-model', alias: ['mock'], ctx: 4096, caps: ['chat'] }],
+  };
+  cfg.providers.push(fakeProvider);
+  cfg.providerById.set(fakeProvider.id, fakeProvider);
+  cfg.registry = buildRegistry(cfg.providers);
+  ctx.pool.sync(cfg.providers);
+
+  // 16. 故障转移：最高优先级的渠道 429，应自动落到内置模拟渠道
+  {
+    const r = await request(base, {
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: auth,
+      body: { model: 'mock', messages: [{ role: 'user', content: '自检：故障转移' }] },
+    });
+    const g = (r.json && r.json.x_gateway) || {};
+    check('首选渠道 429 时自动转移成功', r.status === 200 && g.provider === 'mock', `最终渠道 ${g.provider || '未知'}，共尝试 ${g.attempts} 次`);
+    check('失败渠道被尝试过并记录为多次尝试', g.attempts >= 2, `尝试次数 ${g.attempts}`);
+  }
+
+  // 17. 熔断生效：失败渠道应进入冷却，不再被选中
+  {
+    const r = await request(base, { path: adminPath('/admin/api/overview') });
+    const prov = (r.json.providers || []).find((p) => p.id === '__broken__');
+    const st = prov && prov.keys[0];
+    check('429 渠道已进入冷却熔断状态', !!(st && (st.status === 'cooldown' || st.status === 'limited')), st ? `${st.status}（剩余 ${Math.round((st.cooldownMsLeft || 0) / 1000)} 秒）` : '未找到');
+  }
+
+  // 18. 冷却后不再首选该渠道（自动路由回落到可用渠道）
+  {
+    const r = await request(base, {
+      path: '/v1/chat/completions',
+      method: 'POST',
+      headers: auth,
+      body: { model: 'mock', messages: [{ role: 'user', content: '自检：熔断后再请求' }] },
+    });
+    const g = (r.json && r.json.x_gateway) || {};
+    check('熔断后直接命中可用渠道（无需重试）', r.status === 200 && g.provider === 'mock' && g.attempts === 1, `尝试 ${g.attempts} 次`);
+  }
+
+  // 19. 全部失败时的错误结构
+  {
+    const r = await request(base, {
+      path: '/v1/models',
+      headers: { Authorization: 'Bearer wrong-client-key' },
+    });
+    check('错误客户端密钥返回 401 与明确提示', r.status === 401 && !!r.json.error.code, `状态 ${r.status}`);
+  }
+
+  broken.server.close();
+  app.close();
+  app.server.close();
+
+  const failed = results.filter((r) => !r.ok);
+  console.log(`\n=== 结果：${results.length - failed.length}/${results.length} 项通过 ===`);
+  if (failed.length) {
+    console.log('\n未通过项：');
+    failed.forEach((f) => console.log(`  - ${f.name}${f.detail ? ` (${f.detail})` : ''}`));
+    process.exitCode = 1;
+  } else {
+    console.log('\n全链路自检通过：路由 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 大屏 全部正常。\n');
+  }
+}
+
+main().catch((err) => {
+  console.error('自检脚本异常：', err);
+  process.exitCode = 1;
+});

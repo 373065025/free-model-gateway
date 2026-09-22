@@ -1,0 +1,317 @@
+{
+  "settings": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "requireClientKey": true,
+    "maxAttempts": 4,
+    "requestTimeoutMs": 120000,
+    "connectTimeoutMs": 15000,
+    "cooldownBaseMs": 20000,
+    "cooldownMaxMs": 600000,
+    "invalidKeyCooldownMs": 1800000,
+    "statsFlushMs": 5000,
+    "tzOffsetMinutes": 480,
+    "defaultMaxTokens": 4096,
+    "logLimit": 300,
+    "hourlyRefresh": true,
+    "priorityBias": 1.0,
+    "latencyWeight": 0.35,
+    "successWeight": 0.65
+  },
+
+  "providers": [
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "type": "openai",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "enabled": true,
+      "keysEnv": "OPENROUTER_API_KEY",
+      "homepage": "https://openrouter.ai/keys",
+      "priority": 10,
+      "rpm": 20,
+      "rpd": 50,
+      "discover": true,
+      "freeFilter": ":free",
+      "note": "一个 key 聚合 30+ 免费模型；免费档 20 RPM / 50 RPD，充值 10 美元后免费模型额度提升到 1000 RPD。",
+      "models": [
+        { "id": "deepseek/deepseek-r1:free", "alias": ["deepseek-r1", "r1"], "ctx": 163840, "caps": ["chat", "reason"] },
+        { "id": "deepseek/deepseek-chat-v3-0324:free", "alias": ["deepseek-v3"], "ctx": 163840, "caps": ["chat"] },
+        { "id": "z-ai/glm-4.6:free", "alias": ["glm-4.6", "glm"], "ctx": 204800, "caps": ["chat", "tools"] },
+        { "id": "moonshotai/kimi-k2:free", "alias": ["kimi-k2"], "ctx": 131072, "caps": ["chat", "long"] },
+        { "id": "qwen/qwen3-235b-a22b:free", "alias": ["qwen3-235b"], "ctx": 131072, "caps": ["chat", "reason"] },
+        { "id": "meta-llama/llama-3.3-70b-instruct:free", "alias": ["llama-3.3-70b", "llama3.3"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "google/gemma-3-27b-it:free", "alias": ["gemma-3-27b", "gemma3"], "ctx": 131072, "caps": ["chat", "vision"] },
+        { "id": "mistralai/mistral-small-3.2-24b-instruct:free", "alias": ["mistral-small"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "qwen/qwen3-coder:free", "alias": ["qwen3-coder"], "ctx": 262144, "caps": ["chat", "code", "long"] },
+        { "id": "openrouter/free", "alias": ["openrouter-free"], "ctx": 131072, "caps": ["chat", "auto"] }
+      ]
+    },
+    {
+      "id": "google",
+      "name": "Google AI Studio (Gemini)",
+      "type": "openai",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "enabled": true,
+      "keysEnv": "GEMINI_API_KEY",
+      "homepage": "https://aistudio.google.com/app/apikey",
+      "priority": 9,
+      "rpm": 15,
+      "rpd": 1500,
+      "discover": true,
+      "note": "完全免费、无需绑卡，长上下文+多模态首选；Gemini Pro 档每日仅数十次，Flash 档 1500 次/日。",
+      "models": [
+        { "id": "gemini-2.5-flash", "alias": ["gemini-flash", "gemini"], "ctx": 1048576, "caps": ["chat", "vision", "long", "tools"] },
+        { "id": "gemini-2.5-flash-lite", "alias": ["gemini-flash-lite", "gemini-lite"], "ctx": 1048576, "caps": ["chat", "fast", "long"] },
+        { "id": "gemini-2.0-flash", "alias": ["gemini-2.0-flash"], "ctx": 1048576, "caps": ["chat", "vision", "long"] },
+        { "id": "gemini-2.5-pro", "alias": ["gemini-pro"], "ctx": 1048576, "caps": ["chat", "reason", "long"], "rpd": 50 },
+        { "id": "gemma-3-27b-it", "alias": ["gemma-3-27b", "gemma3"], "ctx": 131072, "caps": ["chat", "vision"] }
+      ]
+    },
+    {
+      "id": "groq",
+      "name": "Groq",
+      "type": "openai",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "enabled": true,
+      "keysEnv": "GROQ_API_KEY",
+      "homepage": "https://console.groq.com/keys",
+      "priority": 8,
+      "rpm": 30,
+      "rpd": 1000,
+      "discover": true,
+      "note": "永久免费层，推理速度最快（LPU），适合实时对话。8B 小模型日额度更高（14400 RPD）。",
+      "models": [
+        { "id": "llama-3.3-70b-versatile", "alias": ["llama-3.3-70b", "llama3.3"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "llama-3.1-8b-instant", "alias": ["llama-3.1-8b", "llama-fast"], "ctx": 131072, "caps": ["chat", "fast"] },
+        { "id": "openai/gpt-oss-120b", "alias": ["gpt-oss-120b"], "ctx": 131072, "caps": ["chat", "reason"] },
+        { "id": "openai/gpt-oss-20b", "alias": ["gpt-oss-20b"], "ctx": 131072, "caps": ["chat", "fast"] },
+        { "id": "qwen/qwen3-32b", "alias": ["qwen3-32b"], "ctx": 131072, "caps": ["chat", "reason"] },
+        { "id": "moonshotai/kimi-k2-instruct", "alias": ["kimi-k2"], "ctx": 131072, "caps": ["chat", "tools"] },
+        { "id": "deepseek-r1-distill-llama-70b", "alias": ["deepseek-r1"], "ctx": 131072, "caps": ["chat", "reason"] }
+      ]
+    },
+    {
+      "id": "zhipu",
+      "name": "智谱 BigModel",
+      "type": "openai",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "enabled": true,
+      "keysEnv": "ZHIPU_API_KEY",
+      "homepage": "https://open.bigmodel.cn/usercenter/apikeys",
+      "priority": 8,
+      "rpm": 60,
+      "rpd": 2000,
+      "discover": false,
+      "note": "GLM 全系 Flash 版本长期免费，中文能力强、国内直连无需代理。",
+      "models": [
+        { "id": "glm-4-flash", "alias": ["glm-flash", "glm"], "ctx": 131072, "caps": ["chat", "tools"] },
+        { "id": "glm-4-flash-250414", "alias": ["glm-4-flash"], "ctx": 131072, "caps": ["chat", "tools"] },
+        { "id": "glm-4v-flash", "alias": ["glm-4v-flash", "glm-vision"], "ctx": 8192, "caps": ["chat", "vision"] }
+      ]
+    },
+    {
+      "id": "siliconflow",
+      "name": "硅基流动 SiliconFlow",
+      "type": "openai",
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "enabled": true,
+      "keysEnv": "SILICONFLOW_API_KEY",
+      "homepage": "https://cloud.siliconflow.cn/account/ak",
+      "priority": 8,
+      "rpm": 60,
+      "rpd": 2000,
+      "discover": true,
+      "embeddings": true,
+      "embeddingModels": ["BAAI/bge-m3"],
+      "note": "国内低延迟，部分小参数量模型长期免费；注册赠送额度。另提供免费的 bge-m3 向量模型。",
+      "models": [
+        { "id": "Qwen/Qwen3-8B", "alias": ["qwen3-8b"], "ctx": 131072, "caps": ["chat", "fast"] },
+        { "id": "THUDM/glm-4-9b-chat", "alias": ["glm-4-9b"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "alias": ["deepseek-r1"], "ctx": 65536, "caps": ["chat", "reason"] },
+        { "id": "Qwen/Qwen2.5-7B-Instruct", "alias": ["qwen2.5-7b"], "ctx": 32768, "caps": ["chat", "fast"] }
+      ]
+    },
+    {
+      "id": "modelscope",
+      "name": "魔搭 ModelScope",
+      "type": "openai",
+      "baseUrl": "https://api-inference.modelscope.cn/v1",
+      "enabled": true,
+      "keysEnv": "MODELSCOPE_API_KEY",
+      "homepage": "https://modelscope.cn/my/myaccesstoken",
+      "priority": 7,
+      "rpm": 30,
+      "rpd": 2000,
+      "discover": true,
+      "note": "阿里旗下，注册即送每日 2000 次免费调用额度，国内直连。",
+      "models": [
+        { "id": "Qwen/Qwen3-8B", "alias": ["qwen3-8b"], "ctx": 131072, "caps": ["chat", "fast"] },
+        { "id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", "alias": ["deepseek-r1"], "ctx": 65536, "caps": ["chat", "reason"] },
+        { "id": "ZhipuAI/GLM-4.5-Flash", "alias": ["glm-4.5-flash"], "ctx": 131072, "caps": ["chat"] }
+      ]
+    },
+    {
+      "id": "cerebras",
+      "name": "Cerebras",
+      "type": "openai",
+      "baseUrl": "https://api.cerebras.ai/v1",
+      "enabled": true,
+      "keysEnv": "CEREBRAS_API_KEY",
+      "homepage": "https://cloud.cerebras.ai",
+      "priority": 7,
+      "rpm": 30,
+      "rpd": 14400,
+      "discover": true,
+      "note": "免费层日额度极高（万元级 tokens/日），晶圆级芯片推理，速度极快。",
+      "models": [
+        { "id": "gpt-oss-120b", "alias": ["gpt-oss-120b"], "ctx": 131072, "caps": ["chat", "reason"] },
+        { "id": "llama3.1-8b", "alias": ["llama-3.1-8b", "llama-fast"], "ctx": 32768, "caps": ["chat", "fast"] },
+        { "id": "qwen-3-235b-a22b-instruct-2507", "alias": ["qwen3-235b"], "ctx": 131072, "caps": ["chat", "reason"] },
+        { "id": "zai-glm-4.6", "alias": ["glm-4.6", "glm"], "ctx": 131072, "caps": ["chat"] }
+      ]
+    },
+    {
+      "id": "nvidia",
+      "name": "NVIDIA NIM",
+      "type": "openai",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "enabled": true,
+      "keysEnv": "NVIDIA_API_KEY",
+      "homepage": "https://build.nvidia.com",
+      "priority": 7,
+      "rpm": 40,
+      "rpd": 1000,
+      "discover": true,
+      "note": "托管 100+ 开源模型，约 40 RPM 且无每日 token 硬上限，需手机号验证。",
+      "models": [
+        { "id": "deepseek-ai/deepseek-r1", "alias": ["deepseek-r1", "r1"], "ctx": 131072, "caps": ["chat", "reason"] },
+        { "id": "meta/llama-3.3-70b-instruct", "alias": ["llama-3.3-70b", "llama3.3"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "qwen/qwen2.5-72b-instruct", "alias": ["qwen2.5-72b"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "openai/gpt-oss-120b", "alias": ["gpt-oss-120b"], "ctx": 131072, "caps": ["chat", "reason"] },
+        { "id": "nvidia/llama-3.1-nemotron-70b-instruct", "alias": ["nemotron-70b"], "ctx": 131072, "caps": ["chat"] }
+      ]
+    },
+    {
+      "id": "cloudflare",
+      "name": "Cloudflare Workers AI",
+      "type": "openai",
+      "baseUrl": "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+      "enabled": true,
+      "keysEnv": "CLOUDFLARE_API_TOKEN",
+      "homepage": "https://dash.cloudflare.com/profile/api-tokens",
+      "priority": 6,
+      "rpm": 60,
+      "rpd": 5000,
+      "discover": false,
+      "note": "免费额度 10000 Neurons/日，边缘节点全球推理；需要额外配置 CLOUDFLARE_ACCOUNT_ID 环境变量。",
+      "models": [
+        { "id": "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "alias": ["llama-3.3-70b", "llama3.3"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "@cf/qwen/qwen2.5-coder-32b-instruct", "alias": ["qwen2.5-coder"], "ctx": 32768, "caps": ["chat", "code"] },
+        { "id": "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", "alias": ["deepseek-r1"], "ctx": 32768, "caps": ["chat", "reason"] },
+        { "id": "@cf/meta/llama-3.1-8b-instruct", "alias": ["llama-3.1-8b", "llama-fast"], "ctx": 32768, "caps": ["chat", "fast"] }
+      ]
+    },
+    {
+      "id": "mistral",
+      "name": "Mistral AI",
+      "type": "openai",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "enabled": true,
+      "keysEnv": "MISTRAL_API_KEY",
+      "homepage": "https://console.mistral.ai/api-keys",
+      "priority": 6,
+      "rpm": 60,
+      "rpd": 1000,
+      "discover": true,
+      "note": "Free 实验档无需绑卡，月额度约 10 亿 tokens，欧洲合规场景友好。",
+      "models": [
+        { "id": "mistral-small-latest", "alias": ["mistral-small"], "ctx": 131072, "caps": ["chat", "tools"] },
+        { "id": "open-mistral-nemo", "alias": ["mistral-nemo"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "codestral-latest", "alias": ["codestral"], "ctx": 262144, "caps": ["chat", "code", "long"] }
+      ]
+    },
+    {
+      "id": "sambanova",
+      "name": "SambaNova Cloud",
+      "type": "openai",
+      "baseUrl": "https://api.sambanova.ai/v1",
+      "enabled": true,
+      "keysEnv": "SAMBANOVA_API_KEY",
+      "homepage": "https://cloud.sambanova.ai/apis",
+      "priority": 6,
+      "rpm": 30,
+      "rpd": 1000,
+      "discover": true,
+      "note": "每模型约 20 万 tokens/日免费额度，推理速度快。",
+      "models": [
+        { "id": "Meta-Llama-3.3-70B-Instruct", "alias": ["llama-3.3-70b", "llama3.3"], "ctx": 131072, "caps": ["chat"] },
+        { "id": "DeepSeek-R1", "alias": ["deepseek-r1", "r1"], "ctx": 131072, "caps": ["chat", "reason"] },
+        { "id": "Llama-4-Maverick-17B-128E-Instruct", "alias": ["llama-4-maverick"], "ctx": 131072, "caps": ["chat", "vision"] }
+      ]
+    },
+    {
+      "id": "github",
+      "name": "GitHub Models",
+      "type": "openai",
+      "baseUrl": "https://models.github.ai/inference",
+      "enabled": true,
+      "keysEnv": "GITHUB_MODELS_TOKEN",
+      "homepage": "https://github.com/settings/tokens",
+      "priority": 5,
+      "rpm": 15,
+      "rpd": 150,
+      "discover": false,
+      "note": "任何 GitHub 用户均可免费调用 GPT-4.1 / GPT-4o / Llama 等；需 classic PAT（勾选 models:read），不是细粒度 token。",
+      "models": [
+        { "id": "openai/gpt-4.1", "alias": ["gpt-4.1"], "ctx": 128000, "caps": ["chat", "tools"] },
+        { "id": "openai/gpt-4o", "alias": ["gpt-4o"], "ctx": 128000, "caps": ["chat", "vision"] },
+        { "id": "openai/gpt-4o-mini", "alias": ["gpt-4o-mini"], "ctx": 128000, "caps": ["chat", "fast", "vision"] },
+        { "id": "meta/Llama-3.3-70B-Instruct", "alias": ["llama-3.3-70b", "llama3.3"], "ctx": 128000, "caps": ["chat"] },
+        { "id": "deepseek/DeepSeek-V3-0324", "alias": ["deepseek-v3"], "ctx": 128000, "caps": ["chat"] },
+        { "id": "microsoft/Phi-4", "alias": ["phi-4"], "ctx": 16000, "caps": ["chat"] }
+      ]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama 本地",
+      "type": "openai",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "enabled": true,
+      "keyless": true,
+      "homepage": "https://ollama.com",
+      "priority": 3,
+      "discover": true,
+      "note": "跑在你自己机器上的模型，完全免费、不限量、断网可用。装了 Ollama 就被自动纳入调度。",
+      "models": []
+    },
+    {
+      "id": "lmstudio",
+      "name": "LM Studio 本地",
+      "type": "openai",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "enabled": true,
+      "keyless": true,
+      "homepage": "https://lmstudio.ai",
+      "priority": 3,
+      "discover": true,
+      "note": "本地推理服务，开启 Local Server 后自动纳入调度。",
+      "models": []
+    },
+    {
+      "id": "mock",
+      "name": "本地内置模拟渠道",
+      "type": "mock",
+      "baseUrl": "mock://local",
+      "enabled": true,
+      "keyless": true,
+      "priority": 1,
+      "discover": false,
+      "note": "内置零依赖模拟渠道，用于不配任何密钥时跑通全链路与自检（selfcheck）。",
+      "models": [
+        { "id": "mock-chat", "alias": ["mock", "mock-chat"], "ctx": 32768, "caps": ["chat"] },
+        { "id": "mock-reason", "alias": ["mock-reason"], "ctx": 32768, "caps": ["chat", "reason"] }
+      ]
+    }
+  ]
+}

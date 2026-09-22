@@ -1,0 +1,30 @@
+#!/bin/bash
+# 升级回调：保留持久目录里的密钥与统计数据，只重新准备新增的默认项。
+
+APP_ROOT="${TRIM_APPDEST:-/var/apps/free-model-gateway}"
+VARDIR="${TRIM_PKGVAR:-/var/pkgvar/free-model-gateway}"
+APPDIR="${VARDIR}/config"
+
+echo "[upgrade_callback] 升级中…（密钥与统计数据保留在 ${VARDIR}）"
+
+mkdir -p "${APPDIR}" "${VARDIR}/data" 2>/dev/null || true
+
+# 老版本配置文件缺少新渠道时，补一份最新的默认配置为 .new，交给用户自己比对合并
+SERVER_DIR=""
+for d in "${APP_ROOT}/target/server" "${APP_ROOT}/server" \
+         "/vol1/@appcenter/free-model-gateway/server" \
+         "/vol1/@appcenter/free-model-gateway/target/server"; do
+  if [ -f "${d}/src/index.js" ]; then SERVER_DIR="${d}"; break; fi
+done
+
+if [ -n "${SERVER_DIR}" ] && [ -f "${APPDIR}/providers.json" ]; then
+  cp "${SERVER_DIR}/config/providers.json" "${APPDIR}/providers.json.new" 2>/dev/null || true
+  echo "[upgrade_callback] 新版本默认渠道配置已另存为 providers.json.new，可自行比对新增渠道"
+fi
+
+if [ ! -f "${APPDIR}/providers.json" ] && [ -n "${SERVER_DIR}" ]; then
+  cp "${SERVER_DIR}/config/providers.json" "${APPDIR}/providers.json" 2>/dev/null || true
+fi
+
+echo "[upgrade_callback] Done."
+exit 0

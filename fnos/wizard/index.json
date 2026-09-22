@@ -1,0 +1,10 @@
+[
+  {
+    "field": "APP_PORT",
+    "label": "Web 端口",
+    "type": "port",
+    "default": "8790",
+    "required": true,
+    "desc": "监控大屏与 OpenAI 兼容接口的访问端口（建议保持默认，修改后桌面图标入口也需要同步修改）"
+  }
+]
