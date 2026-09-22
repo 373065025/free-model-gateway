@@ -120,6 +120,9 @@ function loadConfig() {
       logLimit: 300,
       hourlyRefresh: true,
       autoModelName: 'auto',
+      // 内网自动下发管理令牌：家里 / 办公室的内网打开大屏即可用，不必去找令牌。
+      // 公网来源永远不走这条捷径；要收紧设为 false 或 GATEWAY_TRUST_LAN=0。
+      trustLan: true,
     },
     raw.settings || {}
   );
@@ -132,6 +135,7 @@ function loadConfig() {
   }
   if (process.env.GATEWAY_ADMIN_TOKEN) settings.adminToken = String(process.env.GATEWAY_ADMIN_TOKEN);
   if (process.env.GATEWAY_REQUIRE_CLIENT_KEY === '0') settings.requireClientKey = false;
+  if (process.env.GATEWAY_TRUST_LAN === '0') settings.trustLan = false;
   if (process.env.GATEWAY_ALLOW_REMOTE_BOOTSTRAP === '1') settings.allowRemoteBootstrap = true;
   if (process.env.GATEWAY_TIMEZONE_OFFSET) {
     const off = Number(process.env.GATEWAY_TIMEZONE_OFFSET);

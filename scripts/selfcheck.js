@@ -16,6 +16,7 @@ const path = require('path');
 const { createApp } = require('../src/index');
 const { buildRegistry, CONFIG_DIR } = require('../src/config');
 const eula = require('../src/eula');
+const net = require('../src/net');
 
 const USAGE_TMP = path.join(os.tmpdir(), `fmg-selfcheck-${Date.now()}.json`);
 const NOTIFY_FILE = path.join(CONFIG_DIR, 'notify-config.json');
@@ -152,6 +153,26 @@ async function main() {
 
     const afterAdmin = await request(base, { path: adminPath('/admin/api/overview') });
     check('同意后管理接口门禁立即解除', afterAdmin.status === 200, `状态 ${afterAdmin.status}`);
+  }
+
+  console.log('\n--- 第零点五阶段：令牌自动下发的来源判定（内网免配置） ---\n');
+
+  // 0.5 这组是纯函数单元测试：内网来源要能自动拿到令牌（大屏免配置），
+  //     公网来源必须被挡住（否则端口一映射到公网就把管理权限漏出去）。
+  {
+    const lanOk = ['127.0.0.1', '::1', '::ffff:192.168.9.10', '192.168.9.77',
+      '10.0.0.5', '172.16.0.1', '172.31.255.254', '169.254.1.1', 'fd00::1', 'fe80::1'];
+    const lanBad = ['8.8.8.8', '1.1.1.1', '11.0.0.1', '172.32.0.1', '100.64.0.1', '198.51.100.7'];
+    check('私有网段 / 回环全部判为内网',
+      lanOk.every((ip) => net.isPrivateLan(ip)),
+      lanOk.filter((ip) => !net.isPrivateLan(ip)).join(', ') || '全部命中');
+    check('公网地址不会被判为内网',
+      lanBad.every((ip) => !net.isPrivateLan(ip)),
+      lanBad.filter((ip) => net.isPrivateLan(ip)).join(', ') || '全部排除');
+    check('本机自身地址判为「网关所在机器」', net.isOwnAddress('127.0.0.1') === true);
+    check('外部地址不会误判为「网关所在机器」', net.isOwnAddress('8.8.8.8') === false);
+    check('trustLan 默认开启（局域网打开大屏免配置）', cfg.settings.trustLan === true,
+      `trustLan=${cfg.settings.trustLan}`);
   }
 
   console.log('\n--- 第一阶段：不注入故障渠道，验证基础链路 ---\n');

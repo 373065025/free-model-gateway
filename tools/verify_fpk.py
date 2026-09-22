@@ -84,10 +84,31 @@ def http(path, method="GET", body=None, token=None):
         return e.code, e.read().decode("utf-8")
 
 
+def port_free(port):
+    """端口被别的进程占着时，验证器会「以为自己起的服务」在应答，逐项检查全乱套。
+    这里先试绑一下，绑不上就直接报错退出，别让结果看起来半真半假。"""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("127.0.0.1", int(port)))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
 def main():
     fpk = find_fpk()
     print(f"\n=== 验证 fpk：{os.path.basename(fpk)} ===\n")
     print(f"  产物大小：{os.path.getsize(fpk) / 1024:.1f} KB")
+
+    if not port_free(PORT):
+        print(f"  ✗ 端口 {PORT} 已被占用（可能是残留的旧实例）。先停掉它再验证，")
+        print(f"    否则下面所有请求都会打到别人的服务上，结果不可信。")
+        print(f"    Windows: Get-NetTCPConnection -LocalPort {PORT} | Stop-Process -Id <PID>")
+        sys.exit(1)
 
     outer, target = extract(fpk)
     print(f"  解包完成 → {target}")

@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: 端到端自检（52 项：同意书门禁 / 路由 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 推送）
+      - name: 端到端自检（57 项：同意书门禁 / 内网令牌判定 / 路由 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 推送）
         run: node scripts/selfcheck.js
 
       - name: 更新子系统测试（50 项：GitHub API 通道 + 免令牌网页通道）

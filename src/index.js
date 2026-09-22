@@ -13,7 +13,6 @@
 
 const http = require('http');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { URL } = require('url');
 
@@ -37,29 +36,24 @@ const {
 } = require('./util');
 
 const log = logger('server');
+const { isOwnAddress, isPrivateLan } = require('./net');
 
 /**
- * 判断请求是否来自「这台机器自己」：回环地址，或本机任一网卡的地址。
+ * 这次请求能不能自动拿到管理令牌（dashboard 免配置的关键）。
  *
- * 飞牛的桌面图标是用 `http://<NAS 自己的地址>:8790/` 打开的，源地址会是 NAS
- * 本机的局域网 IP，而不是 127.0.0.1 —— 只认回环会让「点自己的桌面图标」也拿不到
- * 管理令牌，大屏直接打不开。别的机器无法把源 IP 伪装成 NAS 自己的 IP，所以把
- * 「本机」放宽到本机地址并不削弱安全性，只是别把自己人挡在门外。
+ * 三档，从严到松：
+ *   1. 网关所在机器自己（回环 + 本机网卡地址）——永远放行。飞牛桌面图标走的就是
+ *      「本机网卡地址」这一档，只认回环会导致点自己的图标也打不开。
+ *   2. 私有网段（家里 / 办公室的内网）——默认放行（`trustLan`，可用
+ *      `GATEWAY_TRUST_LAN=0` 关掉）。这是对齐同系列应用的体验：局域网里打开
+ *      大屏就能用，不用满 NAS 找令牌。
+ *   3. 公网来源——必须显式 `allowRemoteBootstrap: true` 才放行，否则一律拒绝，
+ *      端口万一被映射到公网也不会把管理权限漏出去。
  */
-function isOwnAddress(ip) {
-  const raw = String(ip || '').replace(/^::ffff:/, '').trim();
-  if (!raw) return false;
-  if (raw === '127.0.0.1' || raw === '::1') return true;
-  try {
-    const ifaces = os.networkInterfaces();
-    for (const name of Object.keys(ifaces)) {
-      for (const addr of ifaces[name] || []) {
-        if (!addr || !addr.address) continue;
-        if (String(addr.address).replace(/^::ffff:/, '').trim() === raw) return true;
-      }
-    }
-  } catch (_e) { /* 取不到网卡信息时退化为只认回环 */ }
-  return false;
+function mayAutoIssueToken(settings, ip) {
+  if (isOwnAddress(ip)) return true;
+  if (settings.trustLan !== false && isPrivateLan(ip)) return true;
+  return settings.allowRemoteBootstrap === true;
 }
 
 const MIME = {
@@ -429,18 +423,18 @@ function createApp(options = {}) {
 
   // 管理接口处理（由 route 通过 await handleAdmin(...) 调用）
   async function handleAdmin(req, res, url, pathname) {
-    // 打开 Dashboard 时自动取一次令牌：仅放行「这台机器自己」发起的请求
-    // （回环地址，或本机任一网卡的地址——飞牛桌面图标走的就是后者）。
-    // 同一个局域网里的其它主机不会命中，避免管理权限被同网段任意机器拿到。
+    // 打开 Dashboard 时自动取一次令牌。判定见 mayAutoIssueToken()：
+    // 网关所在机器自己 → 永远放行；同一私有网段 → 默认放行（trustLan）；
+    // 公网来源 → 必须显式 allowRemoteBootstrap 才放行。
     if (pathname === '/admin/api/bootstrap') {
       const ip = String(req.socket.remoteAddress || '');
       const local = isOwnAddress(ip);
-      if (local || ctx.cfg.settings.allowRemoteBootstrap === true) {
+      if (mayAutoIssueToken(ctx.cfg.settings, ip)) {
         sendJson(res, 200, { token: adminToken(), local });
       } else {
         sendJson(res, 403, {
           error: {
-            message: '出于安全考虑，只有网关所在机器自己访问才会自动下发管理令牌。跨局域网访问请改用 http://<网关地址>:8790/?token=<管理令牌> 打开（令牌在数据目录的 gateway-key.txt 里，也打印在启动日志中），或在页面右上角齿轮里手工填入。',
+            message: '出于安全考虑，只有内网来源才会自动下发管理令牌（当前请求来自公网地址）。请用 http://<网关地址>:8790/?token=<管理令牌> 打开（令牌在数据目录的 gateway-key.txt 里，也打印在启动日志中），或在页面右上角齿轮里手工填入；确有需要可在 config/providers.json 的 settings 里设 "allowRemoteBootstrap": true。',
             code: 'bootstrap_forbidden',
           },
         });
