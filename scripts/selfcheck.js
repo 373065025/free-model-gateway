@@ -10,12 +10,15 @@
  */
 
 const http = require('http');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createApp } = require('../src/index');
-const { buildRegistry } = require('../src/config');
+const { buildRegistry, CONFIG_DIR } = require('../src/config');
+const eula = require('../src/eula');
 
 const USAGE_TMP = path.join(os.tmpdir(), `fmg-selfcheck-${Date.now()}.json`);
+const NOTIFY_FILE = path.join(CONFIG_DIR, 'notify-config.json');
 
 const results = [];
 function check(name, ok, detail) {
@@ -81,6 +84,14 @@ async function readSse(base, options) {
 async function main() {
   console.log('\n=== 免费模型聚合网关 · 端到端自检 ===\n');
 
+  // 「未同意」门禁是靠进程内缓存 eulaOk 生效的，所以必须在 createApp 之前把同意记录清掉，
+  // 才能在同一个进程里真实验证「首次使用 → 拒绝服务 → 同意 → 放行」的完整链路。
+  const eulaAcceptedBefore = eula.isAccepted();
+  eula.revoke();
+
+  // 同理，推送配置也存在真实 CONFIG_DIR，先快照，跑完原样还原
+  const notifyBefore = fs.existsSync(NOTIFY_FILE) ? fs.readFileSync(NOTIFY_FILE, 'utf-8') : null;
+
   const app = createApp({ usageFile: USAGE_TMP });
   const { ctx } = app;
   const cfg = ctx.cfg;
@@ -92,7 +103,49 @@ async function main() {
   const adminPath = (p) => `${p}${p.includes('?') ? '&' : '?'}token=${encodeURIComponent(cfg.gatewayKey)}`;
 
   console.log(`服务已启动：${base}\n`);
-  console.log('--- 第一阶段：不注入故障渠道，验证基础链路 ---\n');
+  console.log('--- 第零阶段：首次使用的《用户许可与免责同意书》门禁 ---\n');
+
+  // 0. 同意书门禁：未同意前除静态页 / healthz / 同意书自身外一律拒绝
+  {
+    const blocked = await request(base, { path: '/v1/models', headers: auth });
+    check('未同意同意书时 /v1/* 被拒绝',
+      blocked.status === 403 && blocked.json && blocked.json.error && blocked.json.error.code === 'eula_required',
+      `状态 ${blocked.status}，code ${blocked.json && blocked.json.error && blocked.json.error.code}`);
+
+    const blockedAdmin = await request(base, { path: adminPath('/admin/api/overview') });
+    check('未同意同意书时管理接口被拒绝',
+      blockedAdmin.status === 403 && blockedAdmin.json && blockedAdmin.json.error && blockedAdmin.json.error.code === 'eula_required',
+      `状态 ${blockedAdmin.status}`);
+
+    const hz = await request(base, { path: '/healthz' });
+    check('未同意同意书时 /healthz 仍可探活（门禁不误伤探针）', hz.status === 200, `状态 ${hz.status}`);
+
+    const page = await request(base, { path: '/' });
+    check('未同意同意书时仍能打开 Dashboard（否则无法完成确认）',
+      page.status === 200 && page.text.includes('eulaModal'), `状态 ${page.status}`);
+
+    const info = await request(base, { path: adminPath('/admin/api/eula') });
+    const secs = info.json && info.json.text && info.json.text.sections;
+    check('同意书接口返回「未同意」状态与完整正文',
+      info.status === 200 && info.json.accepted === false && Array.isArray(secs) && secs.length >= 10,
+      `accepted=${info.json && info.json.accepted}，${Array.isArray(secs) ? secs.length : 0} 个章节`);
+    check('同意书封面信息完整（标题 / 版本 / 摘要 / 更新日期）',
+      !!(info.json && info.json.title && info.json.version && info.json.short && info.json.updatedAt),
+      `${info.json && info.json.title} v${info.json && info.json.version}（${info.json && info.json.updatedAt}）`);
+
+    const accept = await request(base, { path: adminPath('/admin/api/eula/accept'), method: 'POST', body: {} });
+    check('提交同意后返回成功并带回接受时间',
+      accept.status === 200 && accept.json.ok === true && accept.json.state.accepted === true && accept.json.state.acceptedAt > 0,
+      `状态 ${accept.status}`);
+
+    const after = await request(base, { path: '/v1/models', headers: auth });
+    check('同意后 /v1/* 门禁立即解除', after.status === 200, `状态 ${after.status}`);
+
+    const afterAdmin = await request(base, { path: adminPath('/admin/api/overview') });
+    check('同意后管理接口门禁立即解除', afterAdmin.status === 200, `状态 ${afterAdmin.status}`);
+  }
+
+  console.log('\n--- 第一阶段：不注入故障渠道，验证基础链路 ---\n');
 
   // 1. 健康检查
   {
@@ -237,6 +290,53 @@ async function main() {
     check('Dashboard 页面可访问', r.status === 200 && r.text.includes('监控大屏'), `状态 ${r.status}`);
   }
 
+  // 15.5 每日推送（PushPlus）配置与日报预览
+  {
+    const FAKE = 'abcdef0123456789abcdef0123456789';
+
+    const init = await request(base, { path: adminPath('/admin/api/notify/config') });
+    check('推送配置接口返回默认值',
+      init.status === 200 && init.json.enabled === false && init.json.hasToken === false
+      && /^\d{2}:\d{2}$/.test(init.json.timeOfDay),
+      `enabled=${init.json && init.json.enabled}，timeOfDay=${init.json && init.json.timeOfDay}`);
+    check('推送配置默认不泄露任何 token 字段',
+      !JSON.stringify(init.json).includes('token":"'),
+      JSON.stringify(init.json).slice(0, 90));
+
+    const badTime = await request(base, {
+      path: adminPath('/admin/api/notify/config'), method: 'PUT', body: { timeOfDay: '25:99' },
+    });
+    check('非法推送时间被拒绝', badTime.status === 400 && !!badTime.json.error, `状态 ${badTime.status}`);
+
+    const save = await request(base, {
+      path: adminPath('/admin/api/notify/config'),
+      method: 'PUT',
+      body: { enabled: true, token: FAKE, timeOfDay: '08:30', skipIdle: true, channel: 'wechat' },
+    });
+    check('保存推送配置成功且回显已打码',
+      save.status === 200 && save.json.hasToken === true && save.json.tokenMask.includes('****')
+      && save.json.timeOfDay === '08:30' && save.json.enabled === true,
+      `mask=${save.json && save.json.tokenMask}`);
+    check('接口回显中不含明文 token', !JSON.stringify(save.json).includes(FAKE));
+
+    const re = await request(base, { path: adminPath('/admin/api/notify/config') });
+    check('推送配置已持久化', re.json.enabled === true && re.json.hasToken === true && re.json.timeOfDay === '08:30');
+
+    const pv = await request(base, { path: adminPath('/admin/api/notify/preview') });
+    check('日报预览可生成（标题 / 正文 / 摘要齐全）',
+      pv.status === 200 && !!pv.json.title && pv.json.html.length > 200 && !!pv.json.summary,
+      `${pv.json && pv.json.title}`);
+    check('日报正文包含核心用量指标',
+      pv.json.html.includes('今日调用') && pv.json.html.includes('成功率') && pv.json.html.includes('渠道健康'));
+    check('日报预览绝不包含明文 token 或密钥', !pv.json.html.includes(FAKE) && !pv.json.html.includes(cfg.gatewayKey));
+
+    const clear = await request(base, {
+      path: adminPath('/admin/api/notify/config'), method: 'PUT', body: { enabled: false, token: '' },
+    });
+    check('可清除已保存的推送 token',
+      clear.status === 200 && clear.json.hasToken === false && !JSON.stringify(clear.json).includes(FAKE));
+  }
+
   console.log('\n--- 第二阶段：注入一个永远 429 的假渠道，验证熔断与故障转移 ---\n');
 
   const broken = await startBrokenProvider();
@@ -303,6 +403,14 @@ async function main() {
   broken.server.close();
   app.close();
   app.server.close();
+
+  // 还原自检前的同意状态与推送配置，避免测试污染开发者本机的真实使用状态
+  if (!eulaAcceptedBefore) eula.revoke();
+  if (notifyBefore === null) {
+    try { fs.rmSync(NOTIFY_FILE, { force: true }); } catch (_e) { /* ignore */ }
+  } else {
+    try { fs.writeFileSync(NOTIFY_FILE, notifyBefore, 'utf-8'); } catch (_e) { /* ignore */ }
+  }
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n=== 结果：${results.length - failed.length}/${results.length} 项通过 ===`);

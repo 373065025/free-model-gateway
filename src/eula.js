@@ -1,0 +1,184 @@
+'use strict';
+
+/**
+ * 用户许可与免责同意书（EULA）
+ *
+ * 设计目标：
+ *   - 首次启动（或同意书升版后）必须明确同意，否则拒绝提供网关服务；
+ *   - 同意状态持久化在 CONFIG_DIR，纯本地、不上报；
+ *   - 正文与版本号集中在本文件，前端、README、仓库文档三处保持同源。
+ *
+ * 注意：本文件是**面向最终用户的许可与免责文本模板**，用于降低合规与责任风险，
+ * 不构成法律意见。正式对外分发前建议由专业人士复核，并按所在地法律调整。
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { CONFIG_DIR } = require('./config');
+
+const EULA_VERSION = '1.0.0';
+const EULA_TITLE = '用户许可与免责同意书';
+const EULA_UPDATED_AT = '2026-09-22';
+
+/** 一句话摘要，用于应用描述、页脚角标等位置 */
+const EULA_SHORT = '本软件为本地运行的免费开源聚合工具，不提供任何模型服务，请自行遵守各上游平台条款。';
+
+const EULA_SECTIONS = [
+  {
+    title: '一、软件性质',
+    body: [
+      '1.1 本软件（以下称“本软件”）是一个在您自己的设备上运行的免费、开源（MIT 许可）工具，用于把您自行申请的多个第三方大模型平台的 API 凭据汇总为一个本地接口，方便您已有的 AI 客户端集中调用。',
+      '1.2 本软件不是模型服务提供者，不提供、不代理、不转售任何模型推理能力，也不对上游返回内容做任何编辑或背书。所有模型能力均来自您自行接入的第三方平台。',
+      '1.3 本软件与任何第三方平台（包括但不限于其提及的模型厂商）均无隶属、代理、赞助或背书关系。',
+    ],
+  },
+  {
+    title: '二、第三方平台条款优先',
+    body: [
+      '2.1 您通过本软件访问的每一个上游平台，均受该平台自身的服务条款、使用政策、配额与限速规则约束。您承诺自行阅读并遵守这些条款。',
+      '2.2 免费额度、可用模型、接口形态由上游平台单方决定，可能随时变更、限流、收费或停用。本软件无法保证其持续可用，且不承担因此产生的任何影响。',
+      '2.3 若您使用本软件的方式（包括但不限于多账号聚合、密钥轮询、并发调用、批量请求）违反任一上游平台的条款，导致账号被限制、封禁、追责或索赔的，由您自行承担全部后果，与本软件开发者无关。',
+    ],
+  },
+  {
+    title: '三、密钥与账号',
+    body: [
+      '3.1 所有 API Key、令牌、账号均由您自行申请、自行保管，仅保存在您本机（或您指定并自行控制的数据目录）内。',
+      '3.2 本软件开发者不收集、不上传、不代持、不查看您的任何密钥或调用内容，也无法为您找回丢失的密钥。',
+      '3.3 您须保证对所填入的密钥拥有合法使用权，并对其使用行为负责。请勿填入非您本人有权使用的凭据。',
+    ],
+  },
+  {
+    title: '四、数据、隐私与第三方推送',
+    body: [
+      '4.1 本软件的调用统计（次数、Token 数、延迟、渠道健康度等）全部保存在您本机，不含任何遥测、埋点或后台上报行为。',
+      '4.2 本软件主动发起的对外网络请求仅有三类：① 调用您所配置的上游模型接口；② 检查更新时访问项目的 GitHub 仓库；③ 您主动开启推送通知后，向推送服务发送汇总统计。除此之外不会外发任何数据。',
+      '4.3 若您开启“每日推送通知”，本软件会把**汇总后的用量统计**（调用次数、Token 总量、成功率、平均延迟、消耗最多的模型等）发送给第三方推送服务（默认 PushPlus，www.pushplus.plus），再由其转发到您的微信或其他渠道。该数据不包含您的密钥、提示词与模型返回内容。是否开启由您自行决定，开启即表示您同意将上述统计信息交由该第三方处理，其处理行为受该第三方的隐私政策约束。',
+      '4.4 请勿在使用过程中向模型输入国家秘密、商业秘密、他人个人信息或其他敏感数据。您应对自己的输入内容承担全部责任。',
+    ],
+  },
+  {
+    title: '五、合法合规使用',
+    body: [
+      '5.1 您承诺仅将本软件用于合法用途，并自行确保使用行为符合您所在地及服务提供地的法律法规、出口管制与数据跨境要求。',
+      '5.2 您不得利用本软件从事包括但不限于下列行为：生成或传播违法违规信息；侵犯他人知识产权、名誉权与隐私权；绕过上游平台的安全机制或计费限制；批量抓取、恶意刷量、滥用免费额度牟利；将本软件包装为收费服务对外经营或转售。',
+      '5.3 您独立对通过本软件产生的全部请求、输出内容及其后续使用承担法律责任。',
+    ],
+  },
+  {
+    title: '六、无担保',
+    body: [
+      '6.1 本软件按“现状”与“现有”基础提供，不附带任何明示或默示的担保，包括但不限于对适销性、特定用途适用性、不侵权、无错误或不中断的担保。',
+      '6.2 开发者不保证本软件能满足您的任何特定需求，也不保证上游接口、第三方推送服务的持续可用。',
+    ],
+  },
+  {
+    title: '七、责任限制',
+    body: [
+      '7.1 在适用法律允许的最大范围内，开发者不对因使用或无法使用本软件而产生的任何直接、间接、附带、特殊或后果性损失承担责任，包括但不限于数据丢失、额度或费用损失、账号封禁、业务中断、利润或商誉损失。',
+      '7.2 本软件为免费提供，故开发者的累计责任上限以您就本软件实际支付的金额为限（即零元）。',
+      '7.3 您理解并同意：使用非官方客户端或聚合类工具访问第三方服务，本身即存在账号受限等固有风险，该等风险由您自行评估与承担。',
+    ],
+  },
+  {
+    title: '八、商标与第三方内容',
+    body: [
+      '8.1 本软件中出现的所有第三方产品名称、模型名称与商标，均归其各自权利人所有，仅用于说明兼容性或来源。',
+      '8.2 模型输出的内容由对应上游模型生成，不代表开发者的观点，开发者不对其准确性、合法性或适用性作任何保证。',
+    ],
+  },
+  {
+    title: '九、开源许可',
+    body: [
+      '9.1 本软件以 MIT 许可证发布，您可在该许可范围内自由使用、修改与分发源码。',
+      '9.2 本同意书不改变也不削减 MIT 许可证授予您的权利；若本同意书与 MIT 许可证存在冲突，就软件授权部分以 MIT 许可证为准。',
+    ],
+  },
+  {
+    title: '十、变更、终止与接受',
+    body: [
+      '10.1 本同意书可能随版本更新而修订，修订后会提升版本号，您需在软件内重新确认后方可继续使用。',
+      '10.2 若您不同意本同意书的任何内容，请停止使用并卸载本软件；点击“同意”即表示您已完整阅读、理解并自愿接受全部条款。',
+    ],
+  },
+];
+
+function acceptedFile() {
+  return path.join(CONFIG_DIR, '.eula-accepted.json');
+}
+
+function readAccepted() {
+  try {
+    const raw = fs.readFileSync(acceptedFile(), 'utf-8');
+    const d = JSON.parse(raw);
+    return d && typeof d === 'object' ? d : null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+/** 当前同意状态：版本一致才算已同意（升版后自动要求重新确认） */
+function getState() {
+  const rec = readAccepted();
+  const accepted = !!(rec && String(rec.version) === EULA_VERSION);
+  return {
+    version: EULA_VERSION,
+    accepted,
+    acceptedAt: rec && rec.version === EULA_VERSION ? rec.acceptedAt || 0 : 0,
+    acceptedFrom: rec && rec.version === EULA_VERSION ? rec.acceptedFrom || '' : '',
+    title: EULA_TITLE,
+    updatedAt: EULA_UPDATED_AT,
+    short: EULA_SHORT,
+  };
+}
+
+function isAccepted() {
+  return getState().accepted;
+}
+
+/** 记录同意（带版本号；来源 IP 只用于本地审计，不会外发） */
+function accept(meta) {
+  const rec = {
+    version: EULA_VERSION,
+    acceptedAt: Date.now(),
+    acceptedFrom: (meta && meta.from) || '',
+    agent: (meta && meta.agent) ? String(meta.agent).slice(0, 200) : '',
+  };
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(acceptedFile(), JSON.stringify(rec, null, 2), 'utf-8');
+  } catch (err) {
+    return { ok: false, error: `无法写入同意记录：${err.message}` };
+  }
+  return { ok: true, state: getState() };
+}
+
+/** 撤销同意（供测试 / 「我不同意」时清理） */
+function revoke() {
+  try { fs.rmSync(acceptedFile(), { force: true }); } catch (_e) { /* ignore */ }
+  return getState();
+}
+
+/** 完整正文，供接口与文档渲染 */
+function getFullText() {
+  return {
+    version: EULA_VERSION,
+    title: EULA_TITLE,
+    updatedAt: EULA_UPDATED_AT,
+    short: EULA_SHORT,
+    sections: EULA_SECTIONS,
+  };
+}
+
+module.exports = {
+  EULA_VERSION,
+  EULA_TITLE,
+  EULA_UPDATED_AT,
+  EULA_SHORT,
+  EULA_SECTIONS,
+  getState,
+  isAccepted,
+  accept,
+  revoke,
+  getFullText,
+};

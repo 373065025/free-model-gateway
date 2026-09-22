@@ -499,6 +499,98 @@ body {
   background: var(--card-2); border-radius: 6px; padding: 2px 7px;
 }
 
+/* ============================== 每日推送 ============================== */
+.notify-note {
+  color: var(--text-2); font-size: 12.5px; line-height: 1.75; margin: 0 0 15px;
+}
+.notify-note a { color: var(--accent); text-decoration: none; }
+.notify-note a:hover { text-decoration: underline; }
+.notify-note b { color: var(--text); }
+.notify-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+  gap: 12px; margin-bottom: 13px;
+}
+.notify-grid .field-wide { grid-column: 1 / -1; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field label { font-size: 11.5px; color: var(--text-3); font-weight: 500; }
+.field input, .field select {
+  background: var(--bg-soft); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-xs); padding: 9px 11px; font-size: 12.5px;
+  outline: none; font-family: inherit; width: 100%;
+}
+.field input:focus, .field select:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.field input[type='time'] { font-family: var(--mono); }
+.field-hint { font-size: 11px; color: var(--text-3); margin: 0; line-height: 1.6; }
+.input-row { display: flex; align-items: center; gap: 8px; }
+.input-row input { flex: 1 1 auto; min-width: 0; }
+.input-row .btn { flex: 0 0 auto; }
+.switch-line { margin-bottom: 14px; }
+.notify-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 预览区刻意用白底深字：它模拟的是在微信里收到的消息，不跟随应用主题 */
+.notify-preview {
+  margin-top: 14px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+  background: #ffffff; padding: 15px 17px; overflow-x: auto;
+}
+.notify-preview .np-title {
+  font-family: var(--mono); font-size: 11.5px; color: #55555b;
+  margin-bottom: 10px; word-break: break-all;
+}
+
+/* ============================== 弹窗 ============================== */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 80; display: flex; align-items: center;
+  justify-content: center; padding: 22px; background: rgba(0, 0, 0, .55);
+  -webkit-backdrop-filter: saturate(180%) blur(8px);
+  backdrop-filter: saturate(180%) blur(8px);
+}
+.modal {
+  width: min(760px, 100%); max-height: min(86vh, 840px); display: flex; flex-direction: column;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+}
+.modal-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; padding: 20px 24px 15px; border-bottom: 1px solid var(--border-soft);
+}
+.modal-head h2 {
+  margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; color: var(--text);
+}
+.modal-sub { margin: 5px 0 0; font-size: 12px; color: var(--text-3); }
+.modal-head-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.modal-head-right .icon-btn { font-size: 17px; line-height: 1; }
+body.modal-open { overflow: hidden; }
+.modal-body { padding: 18px 24px; overflow-y: auto; flex: 1; min-height: 0; }
+.modal-foot {
+  padding: 15px 24px 20px; border-top: 1px solid var(--border-soft); background: var(--bg-soft);
+}
+.eula-loading { color: var(--text-3); font-size: 13px; }
+.eula-sec { margin-bottom: 17px; }
+.eula-sec h3 { margin: 0 0 7px; font-size: 13.5px; font-weight: 600; color: var(--text); }
+.eula-sec p { margin: 0 0 5px; font-size: 12.5px; line-height: 1.82; color: var(--text-2); }
+.eula-consent {
+  display: flex; align-items: flex-start; gap: 9px; margin-bottom: 13px;
+  font-size: 13px; color: var(--text); cursor: pointer; user-select: none;
+}
+.eula-consent input {
+  margin: 2px 0 0; width: 16px; height: 16px; flex: 0 0 auto;
+  accent-color: var(--accent); cursor: pointer;
+}
+.eula-consent input:disabled { cursor: not-allowed; }
+.eula-consent input:disabled + span { color: var(--text-3); }
+.eula-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+.eula-tip { margin: 10px 0 0; font-size: 11.5px; color: var(--text-3); text-align: right; }
+.eula-declined { margin: 0 0 14px; font-size: 13px; line-height: 1.8; color: var(--text-2); }
+.eula-declined strong { color: var(--red); }
+.eula-read { margin: 0 0 14px; font-size: 12.5px; line-height: 1.7; color: var(--text-3); }
+
+.link-btn {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font-family: inherit; font-size: 11.5px; color: var(--accent);
+}
+.link-btn:hover { text-decoration: underline; }
+
 /* ============================== 滚动条 ============================== */
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }

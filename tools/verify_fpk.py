@@ -136,6 +136,37 @@ def main():
             ok = False
 
         if ok:
+            # ---- 第零步：许可与免责同意书门禁（未同意时必须拒绝服务）----
+            status, text = http("/v1/models", token=TOKEN)
+            blocked = False
+            try:
+                blocked = status == 403 and json.loads(text)["error"]["code"] == "eula_required"
+            except Exception:
+                blocked = False
+            print(f"  {'✓' if blocked else '✗'} 未同意时 /v1/* 被门禁拦截（{status}）")
+            ok = ok and blocked
+
+            status, text = http(f"/admin/api/eula?token={TOKEN}")
+            secs = 0
+            if status == 200:
+                js = json.loads(text)
+                secs = len(js.get("text", {}).get("sections", []))
+                print(f"  {'✓' if secs >= 10 and js.get('accepted') is False else '✗'} "
+                      f"同意书正文随包分发（v{js.get('version')}，{secs} 个章节）")
+                ok = ok and secs >= 10 and js.get("accepted") is False
+            else:
+                print(f"  ✗ 同意书接口异常 {status}")
+                ok = False
+
+            status, text = http(f"/admin/api/eula/accept?token={TOKEN}", method="POST", body={})
+            accepted = False
+            try:
+                accepted = status == 200 and json.loads(text)["state"]["accepted"] is True
+            except Exception:
+                accepted = False
+            print(f"  {'✓' if accepted else '✗'} 提交同意后门禁解除（{status}）")
+            ok = ok and accepted
+
             status, text = http("/v1/models", token=TOKEN)
             models = json.loads(text)["data"] if status == 200 else []
             has_auto = any(m["id"] == "auto" for m in models)

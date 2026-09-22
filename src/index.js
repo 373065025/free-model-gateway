@@ -23,6 +23,8 @@ const upstream = require('./upstream');
 const { discoverAll } = require('./discover');
 const { passthrough } = require('./upstream');
 const updater = require('./updater');
+const eula = require('./eula');
+const notify = require('./notify');
 const {
   logger,
   maskKey,
@@ -60,6 +62,12 @@ function createApp(options = {}) {
 
   const ctx = { cfg, stats, pool };
   let discoveryTimer = null;
+
+  // 同意书状态缓存在进程内：只有本进程会写这个文件，同意后置位即可
+  let eulaOk = eula.isAccepted();
+
+  // 把运行上下文交给推送模块：日报汇总、/notify/preview 都依赖它取数
+  notify.setContext(ctx);
 
   function applyConfig(next) {
     ctx.cfg = next;
@@ -657,6 +665,54 @@ function createApp(options = {}) {
       return;
     }
 
+    // ---- 用户许可与免责同意书 ----
+    if (pathname === '/admin/api/eula' && req.method === 'GET') {
+      sendJson(res, 200, Object.assign({}, eula.getState(), { text: eula.getFullText() }));
+      return;
+    }
+    if (pathname === '/admin/api/eula/accept' && req.method === 'POST') {
+      const r = eula.accept({
+        from: String(req.socket.remoteAddress || ''),
+        agent: req.headers['user-agent'] || '',
+      });
+      if (!r.ok) {
+        sendJson(res, 500, { error: { message: r.error } });
+        return;
+      }
+      eulaOk = true;
+      log.info('[eula] 用户已同意《用户许可与免责同意书》');
+      sendJson(res, 200, { ok: true, state: r.state });
+      return;
+    }
+
+    // ---- 每日用量推送（PushPlus）----
+    if (pathname === '/admin/api/notify/config' && req.method === 'GET') {
+      sendJson(res, 200, notify.getConfig());
+      return;
+    }
+    if (pathname === '/admin/api/notify/config' && req.method === 'PUT') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || '{}'); } catch (_e) { body = {}; }
+      const r = notify.saveConfig(body);
+      if (r.error) { sendJson(res, 400, { error: { message: r.error } }); return; }
+      sendJson(res, 200, r.config);
+      return;
+    }
+    if (pathname === '/admin/api/notify/preview' && req.method === 'GET') {
+      sendJson(res, 200, notify.preview());
+      return;
+    }
+    if (pathname === '/admin/api/notify/test' && req.method === 'POST') {
+      try { sendJson(res, 200, await notify.sendTest()); }
+      catch (err) { sendJson(res, 500, { error: { message: err.message } }); }
+      return;
+    }
+    if (pathname === '/admin/api/notify/send' && req.method === 'POST') {
+      try { sendJson(res, 200, await notify.sendDaily({ force: true, reason: 'manual' })); }
+      catch (err) { sendJson(res, 500, { error: { message: err.message } }); }
+      return;
+    }
+
     sendJson(res, 404, { error: { message: `未知管理接口：${pathname}` } });
   }
 
@@ -670,6 +726,26 @@ function createApp(options = {}) {
       res.writeHead(204);
       res.end();
       return;
+    }
+
+    // ---- 首次使用必须同意《用户许可与免责同意书》----
+    // 静态资源与 /healthz 放行，保证 Dashboard 能打开并弹出同意书；
+    // /v1/* 与管理接口（eula / bootstrap 自身除外）在同意前一律拒绝。
+    if (!eulaOk) {
+      const eulaSelf = pathname === '/admin/api/eula'
+        || pathname === '/admin/api/eula/accept'
+        || pathname === '/admin/api/bootstrap';
+      const gated = pathname.startsWith('/v1/') || (pathname.startsWith('/admin/api/') && !eulaSelf);
+      if (gated) {
+        sendJson(res, 403, {
+          error: {
+            message: '首次使用前需阅读并同意《用户许可与免责同意书》，请打开监控大屏完成确认。',
+            type: 'eula_required',
+            code: 'eula_required',
+          },
+        });
+        return;
+      }
     }
 
     try {
@@ -770,6 +846,7 @@ function createApp(options = {}) {
     startHourlyRefresh,
     close() {
       if (discoveryTimer) clearInterval(discoveryTimer);
+      try { notify.stopScheduler(); } catch (_e) { /* 忽略 */ }
       stats.close();
     },
   };
@@ -799,6 +876,9 @@ function main() {
 
   // 启动自动更新检查（每 6 小时一次；可在 Dashboard 关闭）
   try { updater.startAutoUpdateCheck(); } catch (_e) { /* 自动更新为可选能力 */ }
+
+  // 启动每日用量推送调度（默认关闭；在 Dashboard「每日推送」中开启后生效）
+  try { notify.startScheduler(app.ctx); } catch (_e) { /* 推送为可选能力 */ }
 
   const shutdown = (signal) => {
     log.info(`收到 ${signal}，正在退出…`);

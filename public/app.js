@@ -27,6 +27,8 @@ const state = {
   modelFilter: '',
   models: [],
   updateCfg: null,
+  eula: null,
+  notify: null,
   timer: null,
 };
 
@@ -141,6 +143,9 @@ async function api(path, opts = {}) {
     const msg = (json && json.error && json.error.message) || `HTTP ${res.status}`;
     const err = new Error(msg);
     err.status = res.status;
+    err.code = (json && json.error && json.error.code) || '';
+    // 未同意《用户许可与免责同意书》时，任何被门禁拦截的请求都直接把同意书弹出来
+    if (err.code === 'eula_required') showEulaModal();
     throw err;
   }
   return json;
@@ -178,6 +183,8 @@ async function load() {
       showAlert('需要管理令牌才能查看数据。点右上角齿轮图标填入令牌；本机打开通常会自动填充，令牌也可在 NAS 数据目录的 gateway-key.txt 里找到。');
       const panel = $('settingsPanel');
       if (panel) panel.classList.remove('hidden');
+    } else if (err.code === 'eula_required') {
+      // 同意书弹窗已由 api() 自动触发，这里不再叠加错误提示
     } else {
       showAlert(`加载失败：${err.message}`);
     }
@@ -768,6 +775,286 @@ function renderFooter(d) {
   $('footUpdated').textContent = `最后更新 ${new Date(d.generatedAt).toLocaleTimeString('zh-CN')}`;
 }
 
+/* ------------------------------------------------- 用户许可与免责同意书 */
+/* 首次使用（或同意书升版）必须明确同意；弹窗不能通过 Esc / 点遮罩 / 点关闭按钮跳过。 */
+
+/** 已经渲染进弹窗的同意书版本；用于避免重复拉取把用户的勾选状态冲掉 */
+let eulaShownVersion = '';
+
+function eulaFoot(which) {
+  ['eulaFoot', 'eulaDeclinedFoot', 'eulaReadFoot'].forEach((id) => {
+    const el = $(id);
+    if (el) el.classList.toggle('hidden', id !== which);
+  });
+}
+
+function openEulaMask() {
+  const mask = $('eulaModal');
+  if (mask && mask.classList.contains('hidden')) {
+    mask.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+  }
+}
+
+function hideEulaModal() {
+  const mask = $('eulaModal');
+  if (!mask) return;
+  mask.classList.add('hidden');
+  document.body.classList.remove('modal-open');
+  eulaShownVersion = '';
+}
+
+/** 把同意书内容渲染进弹窗；未同意时强制走「滚到底 → 勾选 → 同意」 */
+function renderEula(r) {
+  const accepted = !!r.accepted;
+  const text = r.text || {};
+  const ver = text.version || r.version || '--';
+  $('eulaVersionBadge').textContent = `v${ver}`;
+  $('eulaSub').textContent = `版本 v${ver} · 更新于 ${text.updatedAt || r.updatedAt || '--'}`;
+  eulaShownVersion = accepted ? '' : ver;
+
+  const secs = text.sections || [];
+  const body = $('eulaBody');
+  body.innerHTML = secs.length
+    ? secs.map((s) => `<section class="eula-sec">
+        <h3>${esc(s.title)}</h3>
+        ${(s.body || []).map((p) => `<p>${esc(p)}</p>`).join('')}
+      </section>`).join('')
+    : '<p class="eula-loading">条款正文为空，请刷新页面重试。</p>';
+  body.scrollTop = 0;
+
+  if (accepted) {
+    // 已同意：只读回看
+    $('eulaCloseBtn').classList.remove('hidden');
+    $('eulaReadInfo').textContent = r.acceptedAt
+      ? `你已于 ${new Date(r.acceptedAt).toLocaleString('zh-CN')} 同意本同意书（版本 v${ver}）。`
+      : `你已同意本同意书（版本 v${ver}）。`;
+    eulaFoot('eulaReadFoot');
+    return;
+  }
+
+  $('eulaCloseBtn').classList.add('hidden');
+  eulaFoot('eulaFoot');
+  const agree = $('eulaAgree');
+  agree.checked = false;
+  agree.disabled = true;
+  $('eulaAcceptBtn').disabled = true;
+  $('eulaTip').textContent = '请向下滚动阅读至条款结尾，然后再勾选同意。';
+  // 正文很短、无需滚动时直接放开勾选
+  setTimeout(checkEulaScrolled, 0);
+}
+
+/** 取回同意书状态并渲染；forceReadonly 用于页脚「用户协议」只读回看 */
+async function loadEula(forceReadonly) {
+  try {
+    const r = await api('/admin/api/eula');
+    state.eula = r;
+    if (r.accepted && !forceReadonly) { hideEulaModal(); return; }
+    openEulaMask();
+    renderEula(r);
+  } catch (err) {
+    openEulaMask();
+    const body = $('eulaBody');
+    if (body) body.innerHTML = `<p class="eula-loading">加载条款失败：${esc(err.message)}</p>`;
+  }
+}
+
+/** 被门禁拦截时调用：弹出同意书 */
+function showEulaModal() {
+  const mask = $('eulaModal');
+  if (!mask) return;
+  const wasHidden = mask.classList.contains('hidden');
+  openEulaMask();
+  // 同意书已经在展示同一版本时不再重复拉取/重渲染：
+  // 否则每一个被门禁拦下的请求都会把用户刚勾选的同意状态重置掉。
+  if (!wasHidden && eulaShownVersion) return;
+  loadEula(false);
+}
+
+/** 页脚入口：已同意则进入只读回看模式 */
+function openEulaReadonly() {
+  openEulaMask();
+  loadEula(true);
+}
+
+/** 只有读到底部才允许勾选「同意」 */
+function checkEulaScrolled() {
+  const body = $('eulaBody');
+  const agree = $('eulaAgree');
+  if (!body || !agree || !agree.disabled) return;
+  const atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 24;
+  if (atBottom) {
+    agree.disabled = false;
+    $('eulaTip').textContent = '已阅读至结尾，请勾选上方选项后点击「同意并开始使用」。';
+  }
+}
+
+async function acceptEula() {
+  const btn = $('eulaAcceptBtn');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '正在保存…';
+  try {
+    await api('/admin/api/eula/accept', { method: 'POST', body: '{}' });
+    hideEulaModal();
+    showAlert('');
+    // 同意前这些接口都被门禁挡着，所以同意后要把首屏数据完整补一遍
+    await load();
+    await fillModelSelect();
+    await loadUpdateConfig();
+    await loadNotify();
+  } catch (err) {
+    $('eulaTip').textContent = `保存失败：${err.message}`;
+    btn.disabled = false;
+  } finally {
+    btn.textContent = old;
+  }
+}
+
+/* ------------------------------------------------------------- 每日推送 */
+function notifyMsg(html, isErr) {
+  const box = $('notifyMsg');
+  if (!box) return;
+  if (!html) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="tr-content" style="${isErr ? 'color:var(--red)' : ''}">${html}</div>`;
+}
+
+function renderNotify(cfg) {
+  state.notify = cfg;
+  if (!cfg) return;
+  $('notifyEnabled').checked = !!cfg.enabled;
+  $('notifyTime').value = cfg.timeOfDay || '09:00';
+  $('notifyChannel').value = cfg.channel || 'wechat';
+  $('notifyTopic').value = cfg.topic || '';
+  $('notifySkipIdle').checked = !!cfg.skipIdle;
+
+  const tokenInput = $('notifyToken');
+  tokenInput.value = '';
+  tokenInput.placeholder = cfg.hasToken
+    ? `已配置：${cfg.tokenMask}（留空则保持不变）`
+    : '粘贴 PushPlus token';
+
+  const hint = $('notifyTokenHint');
+  if (cfg.hasToken) {
+    hint.textContent = `Token 已保存在本机：${cfg.tokenMask}。要更换就直接粘贴新 token 后保存；要清除请点右侧「清除」。`;
+  } else {
+    hint.textContent = '在 pushplus.plus 微信扫码登录后，于「一对一推送」中获取。';
+  }
+
+  const parts = [];
+  parts.push(cfg.enabled ? '已开启' : '未开启');
+  if (cfg.hasToken) parts.push('token 已配置'); else parts.push('未配置 token');
+  parts.push(`每天 ${cfg.timeOfDay} 推送`);
+  if (cfg.lastResult && cfg.lastResult.at) {
+    const t = new Date(cfg.lastResult.at).toLocaleString('zh-CN');
+    parts.push(cfg.lastResult.ok ? `上次推送成功（${t}）` : `上次推送失败：${cfg.lastResult.msg || '未知'}（${t}）`);
+  }
+  $('notifySummary').textContent = parts.join(' · ');
+}
+
+async function loadNotify() {
+  try {
+    const cfg = await api('/admin/api/notify/config');
+    notifyMsg('');
+    renderNotify(cfg);
+  } catch (err) {
+    if (err.code !== 'eula_required') notifyMsg(`读取推送配置失败：${esc(err.message)}`, true);
+  }
+}
+
+async function saveNotify() {
+  const btn = $('notifySaveBtn');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '保存中…';
+  try {
+    const payload = {
+      enabled: $('notifyEnabled').checked,
+      timeOfDay: $('notifyTime').value || '09:00',
+      channel: $('notifyChannel').value,
+      topic: $('notifyTopic').value.trim(),
+      skipIdle: $('notifySkipIdle').checked,
+    };
+    const t = $('notifyToken').value.trim();
+    if (t) payload.token = t;
+    const cfg = await api('/admin/api/notify/config', { method: 'PUT', body: JSON.stringify(payload) });
+    renderNotify(cfg);
+    notifyMsg('设置已保存。' + (cfg.enabled ? (cfg.hasToken ? ' 将按设定时间推送日报。' : ' 但还没配置 token，不会真正推送。') : ''));
+  } catch (err) {
+    notifyMsg(`保存失败：${esc(err.message)}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function clearNotifyToken() {
+  if (!confirm('确认清除已保存的 PushPlus token？清除后不会再有推送，直到重新填入。')) return;
+  try {
+    const cfg = await api('/admin/api/notify/config', { method: 'PUT', body: JSON.stringify({ token: '' }) });
+    renderNotify(cfg);
+    notifyMsg('已清除本机保存的 token。');
+  } catch (err) {
+    notifyMsg(`清除失败：${esc(err.message)}`, true);
+  }
+}
+
+async function previewNotify() {
+  const btn = $('notifyPreviewBtn');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '生成中…';
+  try {
+    const r = await api('/admin/api/notify/preview');
+    const box = $('notifyPreview');
+    box.classList.remove('hidden');
+    box.innerHTML = `<div class="np-title">标题：${esc(r.title)}　|　渠道：${esc(r.channel)}　|　时间：${esc(r.timeOfDay)}</div>${r.html}`;
+  } catch (err) {
+    notifyMsg(`预览失败：${esc(err.message)}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function testNotify() {
+  const btn = $('notifyTestBtn');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '发送中…';
+  try {
+    const r = await api('/admin/api/notify/test', { method: 'POST', body: '{}' });
+    if (r.ok) notifyMsg('测试消息已提交给 PushPlus，请查看微信是否收到（异步投递，通常几秒内到达）。');
+    else notifyMsg(`测试失败：${esc((r.result && r.result.msg) || '未知错误')}`, true);
+    await loadNotify();
+  } catch (err) {
+    notifyMsg(`测试失败：${esc(err.message)}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function sendNotifyNow() {
+  const btn = $('notifySendBtn');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '推送中…';
+  try {
+    const r = await api('/admin/api/notify/send', { method: 'POST', body: '{}' });
+    if (r.ok) notifyMsg('已立即推送一次日报。');
+    else if (r.skipped) notifyMsg(`已跳过：${esc(r.error || '今日无调用')}`);
+    else notifyMsg(`推送失败：${esc((r.result && r.result.msg) || r.error || '未知错误')}`, true);
+    await loadNotify();
+  } catch (err) {
+    notifyMsg(`推送失败：${esc(err.message)}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
 /* ----------------------------------------------------------------- 交互 */
 function bindEvents() {
   $('refreshBtn').addEventListener('click', load);
@@ -930,6 +1217,30 @@ function bindEvents() {
   $('updateCheckBtn').addEventListener('click', checkUpdate);
   $('updateApplyBtn').addEventListener('click', applyUpdate);
   $('updateRollbackBtn').addEventListener('click', rollbackUpdate);
+
+  // ---- 用户许可与免责同意书 ----
+  const eulaBody = $('eulaBody');
+  if (eulaBody) eulaBody.addEventListener('scroll', checkEulaScrolled);
+  const eulaAgree = $('eulaAgree');
+  if (eulaAgree) {
+    eulaAgree.addEventListener('change', () => {
+      $('eulaAcceptBtn').disabled = !eulaAgree.checked;
+    });
+  }
+  const bind = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
+  bind('eulaAcceptBtn', acceptEula);
+  bind('eulaDeclineBtn', () => eulaFoot('eulaDeclinedFoot'));
+  bind('eulaBackBtn', () => eulaFoot('eulaFoot'));
+  bind('eulaCloseBtn', hideEulaModal);
+  bind('eulaCloseBtn2', hideEulaModal);
+  bind('eulaOpenBtn', openEulaReadonly);
+
+  // ---- 每日推送 ----
+  bind('notifySaveBtn', saveNotify);
+  bind('notifyClearTokenBtn', clearNotifyToken);
+  bind('notifyPreviewBtn', previewNotify);
+  bind('notifyTestBtn', testNotify);
+  bind('notifySendBtn', sendNotifyNow);
 }
 
 function startPolling() {
@@ -968,8 +1279,11 @@ async function fillModelSelect() {
   renderTheme();
   watchSystemTheme();
   await bootstrapToken();
+  // 先看同意书：未同意时直接弹窗，并让后续请求走门禁
+  await loadEula(false);
   await load();
   await fillModelSelect();
   await loadUpdateConfig();
+  await loadNotify();
   startPolling();
 })();

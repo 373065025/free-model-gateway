@@ -46,9 +46,18 @@ TRIVIAL_CMDS = {
 }
 
 # 打进包里的网关文件（不含运行时数据与密钥）
-SERVER_ITEMS = ["package.json", "src", "config", "public", "scripts", "README.md"]
+SERVER_ITEMS = ["package.json", "src", "config", "public", "scripts", "README.md", "DISCLAIMER.md"]
+# 许可与免责正文：随包分发，便于在 NAS 的应用目录里直接查阅（应用内弹窗仍是同源正文）
+LEGAL_DOCS = [os.path.join("docs", "用户协议与免责同意书.md")]
 # 运行时产生的本地文件，绝不打进包（密钥 / 自动发现结果 / 更新源凭据）
-SERVER_EXCLUDE = {"keys.json", "models.discovered.json", "update-config.json"}
+# 这些是本机运行时数据 / 隐私，绝不进包：
+#   keys.json            —— 用户的真实 API 密钥
+#   models.discovered.json —— 探测缓存
+#   update-config.json   —— 更新源配置
+#   notify-config.json   —— 每日推送 token（敏感）
+#   .eula-accepted.json  —— 本机同意记录（换了机器理应重新确认）
+SERVER_EXCLUDE = {"keys.json", "models.discovered.json", "update-config.json",
+                  "notify-config.json", ".eula-accepted.json"}
 
 
 def log(msg):
@@ -127,7 +136,8 @@ def build_staging():
                 dst,
                 ignore=shutil.ignore_patterns(
                     "data", "node_modules", "__pycache__", "*.tmp", "keys.json",
-                    "models.discovered.json", "update-config.json", "*.log", ".update",
+                    "models.discovered.json", "update-config.json",
+                    "notify-config.json", ".eula-accepted.json", "*.log", ".update",
                 ),
             )
         else:
@@ -137,6 +147,12 @@ def build_staging():
     shutil.copy2(os.path.join(FNOS, "manifest"), os.path.join(STAGING, "manifest"))
     shutil.copytree(os.path.join(FNOS, "config"), os.path.join(STAGING, "config"))
     shutil.copytree(os.path.join(FNOS, "ui"), os.path.join(STAGING, "ui"))
+
+    # 3) 许可与免责正文（与应用内弹窗同源），随包分发便于查阅
+    for rel in LEGAL_DOCS:
+        src = os.path.join(ROOT, rel)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(server_dst, os.path.basename(rel)))
 
     return server_dst
 

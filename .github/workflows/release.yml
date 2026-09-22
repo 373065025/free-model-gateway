@@ -28,6 +28,12 @@ jobs:
       - name: 端到端自检
         run: node scripts/selfcheck.js
 
+      - name: 更新子系统测试
+        run: node scripts/test-updater.js
+
+      - name: 校验《用户协议与免责同意书》与 src/eula.js 同源
+        run: node tools/gen-eula-doc.js --check
+
       - name: 打包飞牛 fnOS 应用（.fpk）
         run: python tools/build_fpk.py
 

@@ -7,6 +7,8 @@ dist/
 config/keys.json
 config/models.discovered.json
 config/update-config.json
+config/notify-config.json
+config/.eula-accepted.json
 *.fpk
 *.tgz
 *.log

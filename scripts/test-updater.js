@@ -16,7 +16,11 @@ const zlib = require('zlib');
 const crypto = require('crypto');
 
 const updater = require('../src/updater');
-const { cmpVersion, ensureWithin, skipOnExtract, githubApiUrl, fetchManifest, downloadFromSource } = updater._internals;
+const {
+  cmpVersion, ensureWithin, skipOnExtract,
+  githubApiUrl, githubWebLatestUrl, githubAssetUrl, tagFromReleaseLocation, ASSET_NAME_PREFIX,
+  fetchManifest, fetchManifestFromWeb, downloadFromSource, resolveSources,
+} = updater._internals;
 
 const results = [];
 function check(name, ok, detail) {
@@ -94,6 +98,30 @@ async function main() {
   check('normalizeGitHubRepo：空输入', updater.normalizeGitHubRepo('') === '');
   check('githubApiUrl：拼出 releases/latest', githubApiUrl('foo/bar') === 'https://api.github.com/repos/foo/bar/releases/latest');
 
+  // ---- 免令牌回退通道的纯函数 ----
+  check('tagFromReleaseLocation：从 302 Location 取 tag',
+    tagFromReleaseLocation('https://github.com/foo/bar/releases/tag/v1.2.3') === 'v1.2.3');
+  check('tagFromReleaseLocation：忽略查询串与 hash',
+    tagFromReleaseLocation('https://github.com/foo/bar/releases/tag/v1.2.3?x=1#y') === 'v1.2.3');
+  check('tagFromReleaseLocation：非法输入返回空',
+    tagFromReleaseLocation('https://github.com/foo/bar/releases') === '');
+  check('githubWebLatestUrl：拼出 releases/latest（网页）',
+    githubWebLatestUrl('foo/bar') === 'https://github.com/foo/bar/releases/latest');
+  check('githubAssetUrl：按约定拼资产地址',
+    githubAssetUrl('foo/bar', 'v1.2.3', 'free-model-gateway-1.2.3.tgz')
+      === 'https://github.com/foo/bar/releases/download/v1.2.3/free-model-gateway-1.2.3.tgz');
+  check('资产前缀与发布约定一致',
+    ASSET_NAME_PREFIX === 'free-model-gateway');
+
+  // ---- 更新源列表：主通道 + 免令牌兜底 ----
+  const srcList = resolveSources();
+  check('更新源：主通道是 GitHub API', srcList[0].kind === 'github');
+  check('更新源：第二个是免令牌网页兜底', srcList[1] && srcList[1].kind === 'github-web');
+  check('更新源：默认仓库不依赖任何配置',
+    srcList[0].label.includes('373065025/free-model-gateway'), srcList[0].label);
+  check('更新源：兜底通道不带 Authorization',
+    !srcList[1].headers.Authorization);
+
   // 跳过规则（保护用户配置）
   check('skipOnExtract：跳过 server/config/keys.json', skipOnExtract('server/config/keys.json') === true);
   check('skipOnExtract：跳过 server/config/providers.json', skipOnExtract('server/config/providers.json') === true);
@@ -164,6 +192,25 @@ async function main() {
     } else if (req.url === '/dl/login.html') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<html>please login first</html>');
+    } else if (req.url === '/foo/bar/releases/latest') {
+      // 免令牌通道：302 跳到 tag
+      res.writeHead(302, { Location: `${base}/foo/bar/releases/tag/v9.9.9` });
+      res.end();
+    } else if (req.url === '/foo/noside/releases/latest') {
+      res.writeHead(302, { Location: `${base}/foo/noside/releases/tag/v9.9.9` });
+      res.end();
+    } else if (req.url === '/foo/empty/releases/latest') {
+      res.writeHead(404);
+      res.end('no releases here');
+    } else if (req.url === '/foo/bar/releases/download/v9.9.9/free-model-gateway-9.9.9.tgz') {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      res.end(goodTar);
+    } else if (req.url === '/foo/bar/releases/download/v9.9.9/free-model-gateway-9.9.9.tgz.sha256') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(`${sha}  free-model-gateway-9.9.9.tgz\n`);
+    } else if (req.url === '/foo/noside/releases/download/v9.9.9/free-model-gateway-9.9.9.tgz') {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      res.end(goodTar);
     } else { res.writeHead(404); res.end('nope'); }
   });
   await new Promise((r) => mock.listen(0, '127.0.0.1', () => { mockPort = mock.address().port; r(); }));
@@ -193,6 +240,44 @@ async function main() {
       await downloadFromSource({ url: `${base}/repos/foo/bar/releases/missing`, kind: 'github', headers: {}, timeout: 5000 });
     } catch (_e) { notFoundThrew = true; }
     check('GitHub 清单：404 抛错', notFoundThrew);
+
+    // ---------------- 免令牌回退通道（github.com 直连） ----------------
+    const webSrc = {
+      url: `${base}/foo/bar/releases/latest`,
+      kind: 'github-web',
+      repo: 'foo/bar',
+      webBase: base,
+      headers: { 'User-Agent': 'free-model-gateway' },
+      timeout: 5000,
+    };
+    const webMan = await fetchManifest(webSrc);
+    check('网页通道：从 302 解析出版本', webMan.version === '9.9.9', webMan.version);
+    check('网页通道：按约定拼出资产地址',
+      webMan.url === `${base}/foo/bar/releases/download/v9.9.9/free-model-gateway-9.9.9.tgz`, webMan.url);
+    check('网页通道：从 .sha256 旁挂文件取到摘要', webMan.sha256 === sha, webMan.sha256.slice(0, 12) + '…');
+    check('网页通道：标记 source=github-web', webMan.source === 'github-web');
+
+    const webDl = await downloadFromSource(webSrc);
+    check('网页通道：端到端下载并验到 gzip 包',
+      updater.looksLikeGzip(webDl.buf) && webDl.buf.length === goodTar.length);
+
+    // 缺少 .sha256 时不应致命（下载后还有 gzip 魔数兜底）
+    const noSideMan = await fetchManifestFromWeb({
+      url: `${base}/foo/noside/releases/latest`, kind: 'github-web', repo: 'foo/noside',
+      webBase: base, headers: {}, timeout: 5000,
+    });
+    check('网页通道：缺 .sha256 时仍能解析（sha256 为空）',
+      noSideMan.version === '9.9.9' && noSideMan.sha256 === '', `version=${noSideMan.version} sha256='${noSideMan.sha256}'`);
+
+    // 仓库没有 Release → 说人话的 404
+    let emptyThrew = '';
+    try {
+      await fetchManifestFromWeb({
+        url: `${base}/foo/empty/releases/latest`, kind: 'github-web', repo: 'foo/empty',
+        webBase: base, headers: {}, timeout: 5000,
+      });
+    } catch (err) { emptyThrew = err.message; }
+    check('网页通道：无 Release 时给出可读报错', /404/.test(emptyThrew), emptyThrew);
   } finally {
     mock.close();
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_e) { /* ignore */ }

@@ -92,9 +92,48 @@ async function main() {
   const q = (sel) => doc.querySelectorAll(sel);
   const txt = (id) => (doc.getElementById(id) || {}).textContent || '';
 
-  // app.js 由 jsdom 通过网络加载，等它就绪并跑完首次 render
-  const ready = await waitFor(() => q('#leaderboard .lb-row').length > 0, 15000);
+  // app.js 由 jsdom 通过网络加载。首次运行时同意书会先弹出，此时大屏数据尚未加载；
+  // 所以「就绪」有两种可能：同意书弹窗出现，或大屏数据已渲染。
+  const eulaModal = doc.getElementById('eulaModal');
+  const eulaVisible = () => !!eulaModal && !eulaModal.classList.contains('hidden');
+  const ready = await waitFor(() => eulaVisible() || q('#leaderboard .lb-row').length > 0, 15000);
   if (!ready) await sleep(2000);
+
+  // ---- 首次使用：《用户许可与免责同意书》门禁 ----
+  const eulaFirstRun = eulaVisible();
+  if (eulaFirstRun) {
+    check('未同意时自动弹出同意书', true, '弹窗已显示');
+    check('同意书标题正确', txt('eulaTitle').includes('用户许可与免责同意书'), txt('eulaTitle'));
+    check('同意书版本号已回填', /^v\d/.test(txt('eulaVersionBadge')), txt('eulaVersionBadge'));
+
+    const secs = q('#eulaBody .eula-sec');
+    check('同意书章节已全部渲染', secs.length >= 10, `${secs.length} 个章节`);
+    check('同意书正文非空', txt('eulaBody').length > 800, `${txt('eulaBody').length} 字符`);
+
+    const agree = doc.getElementById('eulaAgree');
+    const acceptBtn = doc.getElementById('eulaAcceptBtn');
+    check('未勾选时「同意」按钮不可点', acceptBtn.disabled === true);
+    check('未同意时关闭按钮隐藏（弹窗不可跳过）',
+      doc.getElementById('eulaCloseBtn').classList.contains('hidden'));
+    check('未同意时大屏数据为空（门禁生效）', q('#leaderboard .lb-row').length === 0,
+      `排行榜 ${q('#leaderboard .lb-row').length} 行`);
+
+    agree.checked = true;
+    agree.dispatchEvent(new window.Event('change', { bubbles: true }));
+    const armed = await waitFor(() => acceptBtn.disabled === false, 4000);
+    check('勾选后「同意」按钮变为可点', armed);
+
+    if (armed) {
+      acceptBtn.click();
+      const unlocked = await waitFor(() => q('#leaderboard .lb-row').length > 0, 15000);
+      check('点击同意后门禁解除并加载出大屏数据', unlocked,
+        `排行榜 ${q('#leaderboard .lb-row').length} 行`);
+      check('同意后同意书弹窗自动关闭', !eulaVisible());
+    }
+  } else {
+    check('已处于已同意状态（跳过首次弹窗用例）', true, '同意记录已存在');
+    check('同意书弹窗默认隐藏', !eulaVisible());
+  }
 
   check('页面标题正确', doc.title.includes('免费模型聚合网关'), doc.title);
   check('外部脚本无运行时错误', scriptErrors.length === 0, scriptErrors.slice(0, 3).join(' | ') || '无错误');
@@ -237,6 +276,42 @@ async function main() {
 
   check('更新源默认指向官方仓库',
     txt('updateSource').indexOf('373065025/free-model-gateway') >= 0, txt('updateSource'));
+
+  // 每日推送面板
+  const notifyTime = doc.getElementById('notifyTime');
+  const notifyToken = doc.getElementById('notifyToken');
+  if (notifyTime && notifyToken) {
+    check('每日推送面板已渲染（开关 / 时间 / token / 渠道 / 跳过空流量）',
+      !!doc.getElementById('notifyEnabled') && !!doc.getElementById('notifyChannel')
+      && !!doc.getElementById('notifySkipIdle') && !!doc.getElementById('notifySaveBtn'));
+    check('推送时间已从接口回填为 HH:MM', /^\d{2}:\d{2}$/.test(notifyTime.value), notifyTime.value);
+    check('推送摘要已回填',
+      txt('notifySummary').includes('每天') && txt('notifySummary').includes('推送'), txt('notifySummary'));
+    check('token 输入框不回显明文',
+      notifyToken.type === 'password' && notifyToken.value === '', `type=${notifyToken.type}`);
+
+    doc.getElementById('notifyPreviewBtn').click();
+    const shown = await waitFor(
+      () => !doc.getElementById('notifyPreview').classList.contains('hidden'), 8000);
+    const pv = doc.getElementById('notifyPreview');
+    check('点击「预览日报」生成推送预览', shown && pv.innerHTML.length > 200, `${pv.innerHTML.length} 字符`);
+    check('预览内容为用量日报', pv.innerHTML.includes('用量日报'), '');
+  }
+
+  // 页脚「用户协议」只读回看
+  const openBtn = doc.getElementById('eulaOpenBtn');
+  if (openBtn) {
+    check('页脚提供用户协议入口', true, txt('eulaOpenBtn'));
+    openBtn.click();
+    const readonlyShown = await waitFor(
+      () => eulaVisible() && !doc.getElementById('eulaReadFoot').classList.contains('hidden'), 6000);
+    check('已同意时可只读回看同意书',
+      readonlyShown && !doc.getElementById('eulaCloseBtn').classList.contains('hidden'),
+      `弹窗可见=${eulaVisible()}`);
+    doc.getElementById('eulaCloseBtn2').click();
+    await sleep(150);
+    check('只读回看可正常关闭', !eulaVisible());
+  }
 
   check('整个渲染过程无脚本错误', scriptErrors.length === 0, scriptErrors.slice(0, 3).join(' | ') || '无错误');
 

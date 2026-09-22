@@ -17,5 +17,29 @@ jobs:
         with:
           node-version: '22'
 
-      - name: 运行自检（31 项：路由 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量）
+      - name: 端到端自检（50 项：同意书门禁 / 路由 / 鉴权 / 流式 / 故障转移 / 熔断 / 计量 / 推送）
         run: node scripts/selfcheck.js
+
+      - name: 更新子系统测试（50 项：GitHub API 通道 + 免令牌网页通道）
+        run: node scripts/test-updater.js
+
+      - name: 校验《用户协议与免责同意书》与 src/eula.js 同源
+        run: node tools/gen-eula-doc.js --check
+
+      # jsdom 仅供冒烟测试使用，用 --no-save 安装，不污染运行时的零依赖特性
+      - name: 安装 jsdom（仅测试用）
+        run: npm install --no-save jsdom
+
+      - name: 启动网关（保持「未同意」状态，以便验证首次启动门禁）
+        run: |
+          node src/index.js > /tmp/gateway.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8787/healthz > /dev/null; then
+              echo "网关已就绪"; exit 0
+            fi
+            sleep 1
+          done
+          echo "网关启动超时"; cat /tmp/gateway.log; exit 1
+
+      - name: 大屏渲染冒烟（57 项，含同意书弹窗 → 同意 → 放行全流程）
+        run: node scripts/ui-smoke.js

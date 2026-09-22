@@ -125,6 +125,24 @@ function normalizeGitHubRepo(input) {
 
 const githubApiUrl = (repo) => `https://api.github.com/repos/${repo}/releases/latest`;
 
+// ---- 免令牌回退通道 -------------------------------------------------------
+// api.github.com 匿名只有 60 次/小时/IP，共享出口 IP 很容易 403（实测踩到）。
+// 而 github.com 的 /releases/latest 会 302 跳到具体 tag，不消耗 API 额度、
+// 也不会被限流，因此作为主通道失败时的兜底：从 Location 解析版本号，
+// 再按发布约定拼出资产地址与同名 .sha256。
+// 注意：资产名约定必须与 .github/workflows/release.yml 保持一致。
+const ASSET_NAME_PREFIX = 'free-model-gateway';
+const DEFAULT_GITHUB_WEB_BASE = 'https://github.com';
+const githubWebLatestUrl = (repo) => `${DEFAULT_GITHUB_WEB_BASE}/${repo}/releases/latest`;
+const githubAssetUrl = (repo, tag, name, base) =>
+  `${String(base || DEFAULT_GITHUB_WEB_BASE).replace(/\/+$/, '')}/${repo}/releases/download/${tag}/${name}`;
+
+/** 从 302 的 Location（…/releases/tag/v1.2.1）里取出 tag */
+function tagFromReleaseLocation(loc) {
+  const m = String(loc || '').match(/\/releases\/tag\/([^/?#\s]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 // ============================================================ 安全辅助
 
 function looksLikeGzip(buf) {
@@ -150,19 +168,79 @@ function resolveSources() {
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'free-model-gateway' };
   const tok = String(s.githubToken || '').trim();
   if (tok) headers.Authorization = `Bearer ${tok}`;
-  return [{ url: githubApiUrl(repo), label: `GitHub（${repo}）`, timeout: 15000, headers, kind: 'github' }];
+  return [
+    // 主通道：GitHub API（元数据最全，配了令牌还能读私有仓库）
+    { url: githubApiUrl(repo), label: `GitHub（${repo}）`, timeout: 15000, headers, kind: 'github', repo },
+    // 兜底通道：github.com 直连，无需令牌、不受 API 限流（API 403 时自动接管）
+    {
+      url: githubWebLatestUrl(repo),
+      label: `GitHub 网页（${repo}）`,
+      timeout: 15000,
+      headers: { 'User-Agent': 'free-model-gateway' },
+      kind: 'github-web',
+      repo,
+      webBase: DEFAULT_GITHUB_WEB_BASE,
+    },
+  ];
 }
 
 // ============================================================ 网络
 
-async function fetchWithTimeout(url, headers, timeout) {
+async function fetchWithTimeout(url, headers, timeout, redirect) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout || 15000);
   try {
-    return await fetch(url, { headers: headers || {}, signal: ctrl.signal, redirect: 'follow' });
+    return await fetch(url, {
+      headers: headers || {},
+      signal: ctrl.signal,
+      redirect: redirect || 'follow',
+    });
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** 免令牌通道：读 302 的 Location 拿版本，按约定拼资产地址，再取同名 .sha256 */
+async function fetchManifestFromWeb(src) {
+  const repo = src.repo || effectiveRepo();
+  const webBase = String(src.webBase || DEFAULT_GITHUB_WEB_BASE).replace(/\/+$/, '');
+  const timeout = src.timeout || 15000;
+  const resp = await fetchWithTimeout(src.url, src.headers, timeout, 'manual');
+  // redirect:'manual' 下拿到的就是 301/302/303/307/308；部分运行时会直接跟随后返回 200
+  const loc = resp.headers.get('location') || resp.headers.get('Location') || '';
+  let tag = tagFromReleaseLocation(loc);
+  if (!tag) {
+    // 兜底：有些环境会把重定向直接跟随掉，那就从最终 URL 里取 tag
+    tag = tagFromReleaseLocation(resp.url || '');
+  }
+  if (!tag) {
+    if (resp.status === 404) throw new Error('仓库没有已发布的 Release（404）');
+    throw new Error(`未能从 GitHub 解析最新版本（HTTP ${resp.status}）`);
+  }
+
+  const version = tag.replace(/^v/, '');
+  const name = `${ASSET_NAME_PREFIX}-${version}.tgz`;
+  const url = githubAssetUrl(repo, tag, name, webBase);
+
+  // sha256 走 CDN（不计 API 额度）；拿不到也不致命，下载后会验 gzip 魔数
+  let sha256 = '';
+  try {
+    const r = await fetchWithTimeout(`${url}.sha256`, src.headers, timeout);
+    if (r.ok) {
+      const m = (await r.text()).match(/[a-f0-9]{64}/i);
+      if (m) sha256 = m[0].toLowerCase();
+    }
+  } catch (_e) { /* 没有 .sha256 也能更新 */ }
+
+  return {
+    version,
+    notes: '',
+    url,
+    size: 0,
+    sha256,
+    publishedAt: '',
+    source: 'github-web',
+  };
 }
 
 /** 从 GitHub Release 资产里拿 sha256（优先 API 自带 digest，其次同名 .sha256 资产） */
@@ -183,6 +261,8 @@ async function githubAssetSha(asset, assets, headers, timeout) {
 }
 
 async function fetchManifest(src) {
+  if (src.kind === 'github-web') return fetchManifestFromWeb(src);
+
   const h = Object.assign({ Accept: 'application/vnd.github+json', 'User-Agent': 'free-model-gateway' }, src.headers || {});
   const timeout = src.timeout || 15000;
   const resp = await fetchWithTimeout(src.url, h, timeout);
@@ -642,5 +722,9 @@ module.exports = {
   looksLikeGzip,
   extractTarGz,
   // 供测试用的钩子（纯函数 + 网络函数，不参与运行时以外的逻辑）
-  _internals: { cmpVersion, ensureWithin, skipOnExtract, findAppRoot, githubApiUrl, storageRoot, fetchManifest, downloadFromSource },
+  _internals: {
+    cmpVersion, ensureWithin, skipOnExtract, findAppRoot,
+    githubApiUrl, githubWebLatestUrl, githubAssetUrl, tagFromReleaseLocation, ASSET_NAME_PREFIX,
+    storageRoot, fetchManifest, fetchManifestFromWeb, downloadFromSource, resolveSources,
+  },
 };

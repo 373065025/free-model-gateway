@@ -244,6 +244,60 @@
     </div>
   </section>
 
+  <!-- 每日推送 -->
+  <section class="card" id="notifySection">
+    <div class="card-head">
+      <div class="card-title"><span class="ico ico-accent"></span>每日推送日报</div>
+      <div class="card-tools">
+        <span class="muted" id="notifySummary">--</span>
+        <label class="switch"><input id="notifyEnabled" type="checkbox"><span></span>开启</label>
+      </div>
+    </div>
+    <p class="notify-note">
+      每天在设定时间把整体用量与运行状况汇总成一条日报，通过
+      <a href="https://www.pushplus.plus/" target="_blank" rel="noopener noreferrer">PushPlus</a>
+      推送到微信 / 其他渠道。推送内容仅为汇总统计（调用次数、Token 总量、成功率、平均延迟、渠道健康度等），
+      <b>不包含</b>你的密钥、提示词与模型返回内容。
+    </p>
+    <div class="notify-grid">
+      <div class="field field-wide">
+        <label for="notifyToken">PushPlus Token</label>
+        <div class="input-row">
+          <input id="notifyToken" type="password" placeholder="粘贴 PushPlus token" autocomplete="off">
+          <button id="notifyClearTokenBtn" class="btn btn-mini" type="button">清除</button>
+        </div>
+        <p class="field-hint" id="notifyTokenHint">在 pushplus.plus 微信扫码登录后，于「一对一推送」中获取。</p>
+      </div>
+      <div class="field">
+        <label for="notifyTime">推送时间</label>
+        <input id="notifyTime" type="time" value="09:00">
+      </div>
+      <div class="field">
+        <label for="notifyChannel">推送渠道</label>
+        <select id="notifyChannel">
+          <option value="wechat">微信公众号</option>
+          <option value="webhook">Webhook</option>
+          <option value="cp">企业微信</option>
+          <option value="mail">邮箱</option>
+          <option value="sms">短信</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="notifyTopic">群组编码（可选）</label>
+        <input id="notifyTopic" type="text" placeholder="一对多推送时填写" autocomplete="off">
+      </div>
+    </div>
+    <label class="switch switch-line"><input id="notifySkipIdle" type="checkbox"><span></span>当天没有任何调用时不推送</label>
+    <div class="notify-actions">
+      <button id="notifySaveBtn" class="btn btn-primary" type="button">保存设置</button>
+      <button id="notifyPreviewBtn" class="btn" type="button">预览日报</button>
+      <button id="notifyTestBtn" class="btn" type="button">发送测试</button>
+      <button id="notifySendBtn" class="btn btn-mini" type="button">立即推送一次</button>
+    </div>
+    <div id="notifyMsg" class="test-result hidden"></div>
+    <div id="notifyPreview" class="notify-preview hidden"></div>
+  </section>
+
   <!-- 日志 -->
   <section class="card">
     <div class="card-head">
@@ -270,8 +324,56 @@
     <span id="footStart">自 -- 起计</span>
     <span>·</span>
     <span id="footVersion"></span>
+    <span>·</span>
+    <button id="eulaOpenBtn" class="link-btn" type="button">用户协议与免责声明</button>
   </footer>
 </div>
+
+<!-- 首次使用许可与免责同意书（不可跳过） -->
+<div id="eulaModal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="eulaTitle">
+  <div class="modal eula-modal">
+    <div class="modal-head">
+      <div>
+        <h2 id="eulaTitle">用户许可与免责同意书</h2>
+        <p class="modal-sub" id="eulaSub">请完整阅读后确认</p>
+      </div>
+      <div class="modal-head-right">
+        <span class="badge" id="eulaVersionBadge">v--</span>
+        <button id="eulaCloseBtn" class="icon-btn hidden" type="button" aria-label="关闭">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body" id="eulaBody">
+      <p class="eula-loading">正在加载条款正文…</p>
+    </div>
+    <div class="modal-foot" id="eulaFoot">
+      <label class="eula-consent">
+        <input id="eulaAgree" type="checkbox" disabled>
+        <span>我已完整阅读、理解并同意上述全部条款</span>
+      </label>
+      <div class="eula-actions">
+        <button id="eulaDeclineBtn" class="btn" type="button">不同意</button>
+        <button id="eulaAcceptBtn" class="btn btn-primary" type="button" disabled>同意并开始使用</button>
+      </div>
+      <p class="eula-tip" id="eulaTip">请向下滚动阅读至条款结尾，然后再勾选同意。</p>
+    </div>
+    <div class="modal-foot hidden" id="eulaDeclinedFoot">
+      <p class="eula-declined">
+        你已选择<strong>不同意</strong>本同意书。在同意之前，网关不会提供任何服务。
+        你可以卸载本软件，或返回重新阅读。
+      </p>
+      <div class="eula-actions">
+        <button id="eulaBackBtn" class="btn btn-primary" type="button">返回重新阅读</button>
+      </div>
+    </div>
+    <div class="modal-foot hidden" id="eulaReadFoot">
+      <p class="eula-read" id="eulaReadInfo">你已同意本同意书。</p>
+      <div class="eula-actions">
+        <button id="eulaCloseBtn2" class="btn btn-primary" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/app.js"></script>
 </body>
 </html>
